@@ -6,6 +6,10 @@ import { setupError, supabase } from './lib/supabase'
 import { useAuth } from './auth/useAuth'
 import { signInError } from './auth/errors'
 import { loginDestination } from './auth/routing'
+import { WorkspaceProvider } from './workspace/WorkspaceContext'
+import { useWorkspace, useOnline } from './workspace/useWorkspace'
+import { ProfilePage } from './workspace/ProfilePage'
+import { ResumesPage } from './workspace/ResumesPage'
 import './App.css'
 
 function Brand() {
@@ -93,7 +97,7 @@ function Shell({ session }: { session: Session }) {
   const { pathname } = useLocation()
   const mainRef = useRef<HTMLElement>(null)
   useEffect(() => {
-    document.title = `${navigation.find(item => item.to === pathname)?.label ?? 'Page not found'} · JobPilot`
+    document.title = `${navigation.find(item => item.to === pathname)?.label ?? (pathname === '/profile' ? 'Profile' : pathname === '/resumes' ? 'Resumes' : 'Page not found')} · JobPilot`
     mainRef.current?.focus()
     window.scrollTo(0, 0)
   }, [pathname])
@@ -122,15 +126,22 @@ const checklist = [
 ]
 
 function Dashboard({ session }: { session: Session }) {
+  const { data, loading, error, refresh, online, dirty } = useWorkspace()
+  const unknown = loading ? 'Checking…' : error ? 'Unavailable' : !data?.owner ? 'Owner setup needed' : null
+  const persisted = [
+    { title: 'Owner profile', detail: data?.profile ? 'A profile is saved. Review details and preferences in Profile.' : 'Add your contact details, experience, and preferences in Profile.', status: unknown ?? (data?.profile ? 'Saved' : 'Not saved'), ready: !unknown && !!data?.profile },
+    { title: 'Private resume', detail: 'Upload a private PDF and choose a default in Resumes.', status: unknown ?? (data?.defaultId ? 'Default selected' : data?.resumes.some(item => item.status === 'ready') ? 'Choose a default' : 'No ready resume'), ready: !unknown && !!data?.defaultId },
+  ]
   return <><PageHeading title="Welcome to your workspace.">A little structure for your next career move.</PageHeading>
     <div className="welcome-note"><span className="status-dot" aria-hidden="true" /><p>Signed in as <strong className="wrap-anywhere">{session.user.email ?? 'your Supabase account'}</strong></p></div>
-    <section className="panel" aria-labelledby="setup-heading"><div className="section-heading"><div><h2 id="setup-heading">Your setup checklist</h2><p>The foundation is ready. Here’s what comes next.</p></div><span className="badge">Phase 1</span></div>
-      <ul className="checklist">{checklist.map(item => <li key={item.title}>
+    {error && <p className="error-message" role="alert">{error}</p>}
+    <section className="panel" aria-labelledby="setup-heading"><div className="section-heading"><div><h2 id="setup-heading">Your setup checklist</h2><p>Profile and resume status reflect your saved data.</p></div><span className="badge">Phase 2</span></div>
+      <ul className="checklist">{[...checklist.slice(0, 2), ...persisted, ...checklist.slice(2)].map(item => <li key={item.title}>
         <span className={item.ready ? 'check-icon ready' : 'check-icon'}>{item.ready ? <Check size={19} aria-hidden="true" /> : <Circle size={19} aria-hidden="true" />}</span>
         <div className="check-copy"><h3>{item.title}</h3><p>{item.detail}</p></div><span className={item.ready ? 'badge badge-ready' : 'badge'}>{item.status}</span>
       </li>)}</ul>
     </section>
-    <section className="next-step" aria-labelledby="next-heading"><h2 id="next-heading">Start with your account</h2><p>Review your account and connection status in Settings. Job discovery and application tools will arrive in later phases.</p><Link className="text-link" to="/settings">Review settings <ArrowRight size={18} aria-hidden="true" /></Link></section>
+    <section className="next-step" aria-labelledby="next-heading"><h2 id="next-heading">Prepare your profile and resume</h2><p>Job discovery and application tools arrive in later phases. {dirty ? 'You have unsaved profile changes.' : ''}</p><div className="action-row"><Link className="text-link" to="/profile">Edit profile <ArrowRight size={18} aria-hidden="true" /></Link><Link className="text-link" to="/resumes">Manage resumes</Link><button className="button button-secondary" disabled={loading || !online} onClick={() => void refresh()}>Refresh status</button></div></section>
   </>
 }
 
@@ -144,10 +155,11 @@ function EmptyPage({ jobs = false }: { jobs?: boolean }) {
 }
 
 function SettingsPage({ session, client }: { session: Session; client: SupabaseClient }) {
+  const { dirty } = useWorkspace()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   async function signOut() {
-    if (busy) return
+    if (busy || (dirty && !window.confirm('Sign out and discard unsaved profile changes?'))) return
     setBusy(true); setError(null)
     try {
       const { error: authError } = await client.auth.signOut({ scope: 'local' })
@@ -156,6 +168,8 @@ function SettingsPage({ session, client }: { session: Session; client: SupabaseC
     finally { setBusy(false) }
   }
   return <><PageHeading title="Settings">Your account and workspace connections.</PageHeading>
+    <section className="panel settings-section"><h2>Your application details</h2><p>Manage your saved background and private PDFs. {dirty ? 'Your profile has unsaved changes.' : ''}</p><div className="action-row"><Link className="text-link" to="/profile">Profile</Link><Link className="text-link" to="/resumes">Resumes</Link></div></section>
+    <section className="panel settings-section"><h2>Install on your phone</h2><p><strong>Android:</strong> Open your deployed HTTPS site in Chrome. Open the browser menu, then choose “Install app” or “Add to Home screen”.</p><p><strong>iPhone:</strong> Open the site in Safari. Tap Share, then “Add to Home Screen” and Add. Enable “Open as Web App” if offered.</p><p className="fine-print">Installation availability depends on your browser. Sign in on each device. Only the public app shell works offline; private data needs a connection. Installation does not enable background job automation.</p></section>
     <section className="panel settings-section" aria-labelledby="account-heading"><h2 id="account-heading">Account</h2><p className="muted">Signed in with email and password</p><p className="account-value">{session.user.email ?? 'Email unavailable'}</p>
       <button className="button button-secondary" onClick={signOut} disabled={busy}><LogOut size={18} aria-hidden="true" />{busy ? 'Signing out…' : 'Sign out'}</button>
       <p className="fine-print">Signs out of this browser session.</p>{error && <p className="error-message" role="alert">{error}</p>}
@@ -171,9 +185,9 @@ function NotFound({ signedIn }: { signedIn: boolean }) {
   return <Centered><h1>Page not found</h1><p>This address doesn’t belong to a JobPilot page.</p><Link className="button" to={signedIn ? '/dashboard' : '/login'}>{signedIn ? 'Back to dashboard' : 'Go to sign in'}</Link></Centered>
 }
 
-function Protected({ session }: { session: Session | null }) {
+function Protected({ session, client }: { session: Session | null; client: SupabaseClient }) {
   const location = useLocation()
-  return session ? <Shell key={session.user.id} session={session} /> : <Navigate to="/login" state={{ from: location.pathname }} replace />
+  return session ? <WorkspaceProvider key={session.user.id} ownerId={session.user.id} client={client}><Shell session={session} /></WorkspaceProvider> : <Navigate to="/login" state={{ from: location.pathname }} replace />
 }
 
 function AuthenticatedApp({ client }: { client: SupabaseClient }) {
@@ -187,7 +201,9 @@ function AuthenticatedApp({ client }: { client: SupabaseClient }) {
   return <Routes>
     <Route path="/" element={<Navigate to={auth.session ? '/dashboard' : '/login'} replace />} />
     <Route path="/login" element={auth.session ? <Navigate to={loginDestination(location.state)} replace /> : <Login client={client} notice={auth.notice} />} />
-    <Route element={<Protected session={auth.session} />}>
+    <Route element={<Protected session={auth.session} client={client} />}>
+      <Route path="/profile" element={<ProfilePage />} />
+      <Route path="/resumes" element={<ResumesPage />} />
       <Route path="/dashboard" element={auth.session && <Dashboard session={auth.session} />} />
       <Route path="/jobs" element={<EmptyPage jobs />} />
       <Route path="/applications" element={<EmptyPage />} />
@@ -198,7 +214,8 @@ function AuthenticatedApp({ client }: { client: SupabaseClient }) {
 }
 
 export default function App() {
+  const online = useOnline()
   if (!supabase) return <SetupError message={setupError ?? 'Supabase is not configured.'} />
-  return <BrowserRouter><AuthenticatedApp client={supabase} /></BrowserRouter>
+  return <><div className="connection-banner" role="status" hidden={online}>You’re offline. Private data cannot be refreshed. Saving, uploads, downloads, and deletion are disabled. Unsaved entries remain in memory until you close or sign out.</div><BrowserRouter><AuthenticatedApp client={supabase} /></BrowserRouter></>
 }
 

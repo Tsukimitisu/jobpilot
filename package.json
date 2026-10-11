@@ -8,7 +8,10 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:pwa": "node scripts/verify-pwa.mjs",
+    "test:storage:local": "node scripts/check-local-storage.mjs",
+    "test:browser": "node scripts/check-browser.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",

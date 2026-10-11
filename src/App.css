@@ -10,8 +10,35 @@
 .entry-panel form { margin: 28px 0 20px; }
 .field { display: grid; gap: 8px; margin-bottom: 20px; }
 .field label { font-weight: 600; }
-.field input { width: 100%; min-width: 0; min-height: 50px; padding: 10px 14px; border: 1px solid #899c90; border-radius: 8px; background: var(--surface); color: inherit; }
-.field input[aria-invalid='true'] { border-color: #a23b33; }
+.field input, .field textarea, .field select { width: 100%; min-width: 0; min-height: 50px; padding: 10px 14px; border: 1px solid #899c90; border-radius: 8px; background: var(--surface); color: inherit; }
+.field [aria-invalid='true'] { border-color: #a23b33; }
+.field textarea { resize: vertical; }
+.field-error { color: #862e26; font-size: .875rem; }
+.form-section { min-width: 0; padding: 24px 20px; margin: 24px 0; }
+.form-section > legend { font-size: 1.2rem; font-weight: 650; padding: 0 8px; }
+.form-grid { display: grid; gap: 0 24px; }
+.form-grid > *, .field { min-width: 0; }
+.choices { border: 0; padding: 0; margin: 0 0 28px; min-width: 0; }
+.choices legend { font-weight: 600; }
+.choice-list { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 8px; }
+.choice-list label { display: flex; align-items: center; gap: 10px; min-height: 48px; cursor: pointer; }
+.choice-list input { width: 20px; height: 20px; accent-color: var(--green); }
+.action-row { display: flex; flex-wrap: wrap; gap: 12px 20px; margin-top: 12px; }
+.form-actions { padding-bottom: 16px; }
+.resume-list { list-style: none; padding: 0; margin: 0; }
+.resume-list li { border-top: 1px solid var(--border); padding: 24px 0; }
+.resume-list li:last-child { padding-bottom: 0; }
+.resume-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
+.resume-title h3 { min-width: 0; overflow-wrap: anywhere; }
+.section-heading.compact { padding: 0 0 20px; align-items: center; }
+.settings-section form { margin-top: 20px; }
+.danger { color: #862e26; }
+.connection-banner, .update-banner { position: relative; z-index: 6; padding: 16px 20px; background: var(--green-soft); color: var(--green); }
+.connection-banner[hidden] { display: none; }
+@media (min-width: 640px) {
+  .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .form-section { padding: 28px; }
+}
 .button { min-height: 48px; padding: 11px 20px; display: inline-flex; justify-content: center; align-items: center; gap: 10px; border: 1px solid transparent; border-radius: 8px; background: var(--green); color: white; font-weight: 600; text-decoration: none; }
 .full-width { width: 100%; }
 .button-secondary { background: var(--surface); border-color: #899c90; color: #293a30; }

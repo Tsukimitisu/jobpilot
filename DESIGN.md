@@ -76,3 +76,20 @@ Status badges use a compact 6px radius. Lucide line icons accompany readable lab
 - Do describe unavailable features through honest setup and empty states.
 - Don't add decorative metrics, pretend controls, or visual claims that imply future
   functionality is already available.
+
+## Phase 2 extension and verification
+
+Profile and Resumes extend the existing light/green system without replacing it.
+They are reached from Settings and the dashboard, retaining the four-item mobile
+navigation. Profile fieldsets group contact, professional background, and job
+preferences; paired fields become two columns at 640px. Textareas and selects keep
+16px input text, visible labels, errors, and native keyboard behavior. Checkbox
+labels have 48px targets. Resume names wrap; actions wrap into multiple rows.
+Offline and update notices reuse the existing soft-green status colors.
+
+Headless Edge rendered the production build at 360, 375, 390, 768, 1024, and 1440px,
+plus 932×360 landscape, with mocked Supabase data. Profile and resume screenshots
+were inspected at 390 and 1440px. This supersedes the Phase 1 no-browser limitation
+for those surfaces only; it does not verify real phone installation, Safari, screen
+readers, or hosted behavior. The mechanical detector reported palette-documentation
+advisories for existing secondary/border/error colors, not layout failures.

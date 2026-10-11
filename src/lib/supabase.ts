@@ -11,6 +11,7 @@ if (result.config) {
       global: {
         fetch: (input, init) => fetch(input, {
           ...init,
+          cache: 'no-store',
           signal: init?.signal
             ? AbortSignal.any([init.signal, AbortSignal.timeout(12_000)])
             : AbortSignal.timeout(12_000),

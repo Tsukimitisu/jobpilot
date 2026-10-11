@@ -16,7 +16,9 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 280px; }
-button, input { font: inherit; }
+button, input, textarea, select { font: inherit; }
+button, a, input, select { touch-action: manipulation; }
+input, textarea, select, button { scroll-margin-block: 24px 120px; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .65; }

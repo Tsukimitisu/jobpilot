@@ -26,3 +26,7 @@ dist-ssr
 .env
 .env.*
 !.env.example
+supabase/.temp/
+supabase/.branches/
+.browser-check/
+artifacts/

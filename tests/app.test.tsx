@@ -9,7 +9,7 @@ const mock = vi.hoisted(() => ({
   configured: true,
 }))
 vi.mock('../src/lib/supabase', () => ({
-  get supabase() { return mock.configured ? { auth: authClient } : null },
+  get supabase() { return mock.configured ? client : null },
   get setupError() { return mock.configured ? null : 'Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY to your environment.' },
 }))
 const authClient = {
@@ -19,6 +19,7 @@ const authClient = {
     return { data: { subscription: { unsubscribe: () => mock.listeners.delete(callback) } } }
   },
 }
+const client = { auth: authClient, rpc: async () => ({ data: false, error: null }) }
 import App from '../src/App'
 
 function session(): Session {
