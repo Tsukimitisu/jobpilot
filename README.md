@@ -1,11 +1,17 @@
-# JobPilot — Phase 2
+# JobPilot — Phase 3
 
 Personal, single-owner job-search workspace using React, TypeScript, Vite,
 Supabase Auth/Postgres/private Storage, Vercel, and vite-plugin-pwa.
 Phase 1 authentication remains in place. Phase 2 adds an administrator-appointed
 owner, a persistent profile, private PDF resumes, and an installable app shell.
-No Gmail connection, job discovery, applications, AI processing, email sending,
-background sync, scheduled workers, or follow-ups are implemented.
+Phase 3 adds read-only Gmail, label-scoped and Greenhouse imports, manual jobs,
+explainable matching, and saved/dismissed/review state. Applications, AI processing,
+email sending, background sync, scheduled workers, and follow-ups remain unavailable.
+
+**For an existing Phase 2 installation, use [the Phase 3 setup and deployment guide](PHASE3.md).**
+It includes the exact Google callback URI, backend secrets, new migration and
+Edge Function commands, API contract, parsing limits, and hosted/phone acceptance.
+The original setup instructions below remain for first-time installation.
 
 **Frontend deployment and database migrations are separate operations.** Deploying
 to Vercel does not apply SQL or appoint an owner. This implementation run does not
@@ -301,8 +307,9 @@ In Authentication → URL Configuration:
   `http://127.0.0.1:5173/login`. Add port 4173 only when testing the production preview.
 
 Current password sign-in does not use OAuth/email redirect callbacks, but these
-values must be correct for Supabase-generated account flows. Gmail/OAuth and
-password-reset flows are not implemented here. Do not send test emails.
+values must be correct for Supabase-generated account flows. Phase 3 Gmail OAuth
+uses the separate Edge callback documented in PHASE3.md. Password reset remains
+unimplemented. Do not send test application emails.
 
 ## Data, failure handling, and PWA privacy
 
@@ -354,7 +361,7 @@ operation, retry after interrupted upload/deletion, default switching in two tab
 non-owner denial, offline controls, and update postponement with a dirty form.
 Check phone widths 360/375/390, tablet 768/1024, desktop 1440, landscape, 200% zoom,
 keyboard focus, touch targets, safe areas, and screen-reader announcements. Verify
-Gmail remains Not connected and automation Not implemented. Confirm cache contents
+Gmail reflects its saved status and automation remains Not implemented. Confirm cache contents
 in DevTools → Application → Cache Storage contain no API URLs/private data.
 Phone installation, iOS behavior, screen readers, and hosted Auth/Storage/Vercel
 behavior require actual device/hosted checks; browser emulation is not a substitute.

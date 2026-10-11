@@ -93,3 +93,19 @@ were inspected at 390 and 1440px. This supersedes the Phase 1 no-browser limitat
 for those surfaces only; it does not verify real phone installation, Safari, screen
 readers, or hosted behavior. The mechanical detector reported palette-documentation
 advisories for existing secondary/border/error colors, not layout failures.
+
+## Phase 3 extension
+
+Jobs and Gmail/source settings inherit the same system fonts, green accents, panel
+borders, 48px actions, 50px inputs, wrapping text, and existing navigation. Jobs
+uses progressive disclosure for manual entry, import controls, filter options,
+scoring rules, uncertainty, and source descriptions. Job fit uses definition lists;
+saved state and errors always include text. Settings distinguishes stored status
+from the date access was last checked with Google. Descriptions render as escaped
+plain text, with no embedded provider HTML or remote images.
+
+Headless Edge with synthetic, mocked provider data checks Jobs and Settings at
+360/375/390/768/1024/1440px and 932×360 landscape, touch-target size, connection
+states, label confirmation, job save/dismiss, and public-only cache contents.
+390px and 1440px screenshots were inspected. These checks do not establish live
+Gmail consent, actual phone installation/handoff, Safari, or screen-reader output.

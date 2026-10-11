@@ -51,6 +51,11 @@ try {
   let resumes = []
   let defaultId = null
   let mutationCount = 0
+  let gmail = null
+  let rejectGmail = false
+  const sources = [{ id: 'source-fixture', kind: 'gmail', source_key: 'Label_fixture', name: 'JobPilot/Alerts', enabled: true, cursor: null, last_success_at: '2026-01-01T00:00:00Z' }]
+  const jobs = [{ id: 'job-fixture', owner_id: owner, title: 'Frontend Engineer', company: 'Fixture Company', location: null, work_mode: null, canonical_url: 'https://example.invalid/jobs/42', description: 'Inert browser fixture. No real mailbox content.', requirements: ['React', 'TypeScript'], uncertainty: ['Location and work mode unknown. Verify the source.'], published_at: null, created_at: '2026-01-01T00:00:00Z' }]
+  const reviews = [{ job_id: 'job-fixture', owner_id: owner, disposition: 'new', reviewed: false }]
   const consoleErrors = []
   on('Runtime.exceptionThrown', event => consoleErrors.push(event.exceptionDetails.text))
   on('Fetch.requestPaused', async ({ requestId, request }) => {
@@ -65,6 +70,20 @@ try {
     else if (url.pathname === '/rest/v1/owner_profiles') {
       if (request.method === 'POST') { profile = { ...JSON.parse(request.postData), updated_at: '2026-10-11T00:00:00Z' }; mutationCount++ }
       body = profile ? (request.headers.Accept?.includes('object') || request.headers.accept?.includes('object') ? profile : [profile]) : []
+    } else if (url.pathname === '/rest/v1/gmail_connections') body = gmail ? [gmail] : []
+    else if (url.pathname === '/rest/v1/job_sources') body = sources
+    else if (url.pathname === '/rest/v1/imported_jobs') body = jobs
+    else if (url.pathname === '/rest/v1/import_runs') body = []
+    else if (url.pathname === '/rest/v1/job_origins') body = [{ id: 'origin-fixture', job_id: 'job-fixture', source_id: 'source-fixture', message_id: 'message-fixture', sender: 'alerts@example.invalid', source_date: '2026-01-01T00:00:00Z', source_url: 'https://mail.google.com/mail/u/0/#all/message-fixture' }]
+    else if (url.pathname === '/rest/v1/job_reviews') {
+      if (request.method === 'PATCH') Object.assign(reviews[0], JSON.parse(request.postData))
+      body = request.headers.Accept?.includes('object') || request.headers.accept?.includes('object') ? reviews[0] : reviews
+    } else if (url.pathname === '/functions/v1/jobpilot-api') {
+      const input = JSON.parse(request.postData)
+      if (input.action === 'labels') body = { labels: [{ id: 'Label_fixture', name: 'JobPilot/Alerts' }] }
+      else if (input.action === 'check_gmail' && rejectGmail) { gmail.status = 'reconnect_required'; gmail.error_code = 'reconnect_required'; status = 400; body = { error: 'reconnect_required' } }
+      else if (input.action === 'disconnect') { gmail = { expected_email: user.email, status: 'disconnected' }; body = { ok: true } }
+      else body = { ok: true, added: 0, duplicates: 1, more: false }
     } else if (url.pathname === '/rest/v1/resumes') body = resumes
     else if (url.pathname === '/rest/v1/resume_defaults') body = defaultId ? [{ resume_id: defaultId }] : []
     else { status = 403; body = { message: 'External network blocked by local browser test' } }
@@ -123,14 +142,47 @@ try {
     const image = await send('Page.captureScreenshot', { format: 'png' })
     await writeFile(`artifacts/resumes-${width}.png`, Buffer.from(image.data, 'base64'))
   }
+  const clickText = text => evaluate(`(() => { const button = [...document.querySelectorAll('button')].find(e => e.textContent === ${JSON.stringify(text)}); if (!button || button.disabled) throw new Error('Unavailable button'); button.click(); })()`)
+  await evaluate(`document.querySelector('a[href="/settings"]').click()`)
+  await waitFor(`document.body.textContent.includes('Gmail connection') && document.body.textContent.includes('Disconnected')`)
+  gmail = { status: 'connected', expected_email: user.email, connected_email: user.email, checked_at: '2026-01-01T00:00:00Z', error_code: null }
+  await clickText('Refresh source status')
+  await waitFor(`!![...document.querySelectorAll('.badge')].find(e => e.textContent === 'Connected')`)
+  await clickText('Load Gmail labels')
+  await waitFor(`!!document.querySelector('#gmail-label')`)
+  await clickText('Confirm label')
+  await waitFor(`document.body.textContent.includes('Gmail import label confirmed.')`)
+  for (const route of ['settings', 'jobs']) {
+    await evaluate(`document.querySelector('a[href="/${route}"]').click()`)
+    await waitFor(route === 'jobs' ? `!!document.querySelector('.job-item')` : `!!document.querySelector('#gmail-address')`)
+    for (const [width, height] of [[360, 800], [375, 812], [390, 844], [768, 1024], [1024, 768], [1440, 1000], [932, 360]]) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 900 })
+      await send('Emulation.setTouchEmulationEnabled', { enabled: width < 900 })
+      await pause(100)
+      assert.ok(await evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), `${route} overflow at ${width}`)
+      assert.ok(await evaluate(`[...document.querySelectorAll('button,summary,input,select,textarea')].filter(e => e.getClientRects().length).every(e => (e.type === 'checkbox' ? e.closest('label') : e).getBoundingClientRect().height >= 44)`), `${route} small touch target at ${width}`)
+      if (width === 390 || width === 1440) { const screenshot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true }); await writeFile(`artifacts/${route}-${width}.png`, Buffer.from(screenshot.data, 'base64')) }
+    }
+  }
+  await clickText('Save job')
+  await waitFor(`!![...document.querySelectorAll('button')].find(e => e.textContent === 'Unsave job')`)
+  await clickText('Dismiss job')
+  await waitFor(`document.body.textContent.includes('No jobs match these filters.')`)
+  await evaluate(`document.querySelector('a[href="/settings"]').click()`)
+  await waitFor(`!!document.querySelector('#gmail-address')`)
+  rejectGmail = true
+  await clickText('Check Gmail access')
+  await waitFor(`!![...document.querySelectorAll('.badge')].find(e => e.textContent === 'Reconnect required')`)
+  await clickText('Disconnect Gmail')
+  await waitFor(`!![...document.querySelectorAll('.badge')].find(e => e.textContent === 'Disconnected')`)
   await waitFor(`navigator.serviceWorker.getRegistration().then(r => !!r?.active)`)
   const caches = await evaluate(`(async () => { const names = await window.caches.keys(); return (await Promise.all(names.map(async name => (await (await window.caches.open(name)).keys()).map(r => r.url)))).flat() })()`)
   assert.ok(caches.length > 0)
-  assert.ok(caches.every(url => new URL(url).origin === origin && !/\/rest\/|\/auth\/|\/storage\/|signed|blob:/.test(url)), 'private data in service-worker cache')
+  assert.ok(caches.every(url => new URL(url).origin === origin && !/\/rest\/|\/auth\/|\/storage\/|\/functions\/|signed|blob:/.test(url)), 'private data in service-worker cache')
   const storageKeys = await evaluate('Object.keys(localStorage)')
   assert.ok(storageKeys.every(key => key.startsWith('sb-') && key.endsWith('-auth-token')), 'non-session browser persistence found')
   assert.deepEqual(consoleErrors, [])
-  console.log(`Real headless Edge PASS with mocked Supabase: login, profile save/reload, offline draft preservation, layouts at 360/375/390/768/1024/1440 and landscape, resume layout, ${caches.length} public cache entries, session-only localStorage. Screenshots: artifacts/. No phone installation or live hosted checks.`)
+  console.log(`Real headless Edge PASS with mocked Supabase: login, profile save/reload, offline draft preservation, job save/dismiss, label confirmation, connected/reconnect/disconnected states, layouts at 360/375/390/768/1024/1440 and landscape, ${caches.length} public cache entries, session-only localStorage. Screenshots: artifacts/. No phone installation or live Gmail/hosted checks.`)
   await send('Browser.close').catch(() => {})
 } finally {
   socket?.close()

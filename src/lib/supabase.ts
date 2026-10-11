@@ -13,7 +13,7 @@ if (result.config) {
           ...init,
           cache: 'no-store',
           signal: init?.signal
-            ? AbortSignal.any([init.signal, AbortSignal.timeout(12_000)])
+            ? AbortSignal.any([init.signal, AbortSignal.timeout(String(input).includes('/functions/v1/jobpilot-api') ? 120_000 : 12_000)])
             : AbortSignal.timeout(12_000),
         }),
       },

@@ -4,6 +4,12 @@
 # working directory name when running `supabase init`.
 project_id = "jobpilot"
 
+[functions.jobpilot-api]
+verify_jwt = false
+
+[functions.gmail-callback]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

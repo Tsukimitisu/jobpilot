@@ -1,6 +1,6 @@
 ﻿import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { BrowserRouter, Link, Navigate, NavLink, Outlet, Route, Routes, useLocation } from 'react-router-dom'
-import { ArrowRight, BriefcaseBusiness, Check, Circle, LayoutDashboard, LogOut, Mail, Send, Settings, Sprout } from 'lucide-react'
+import { ArrowRight, BriefcaseBusiness, Check, Circle, LayoutDashboard, LogOut, Send, Settings, Sprout } from 'lucide-react'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { setupError, supabase } from './lib/supabase'
 import { useAuth } from './auth/useAuth'
@@ -10,6 +10,11 @@ import { WorkspaceProvider } from './workspace/WorkspaceContext'
 import { useWorkspace, useOnline } from './workspace/useWorkspace'
 import { ProfilePage } from './workspace/ProfilePage'
 import { ResumesPage } from './workspace/ResumesPage'
+import { DiscoveryProvider } from './workspace/DiscoveryProvider'
+import { useDiscovery } from './workspace/useDiscovery'
+import { JobsPage } from './workspace/JobsPage'
+import { SourceSettings } from './workspace/SourceSettings'
+import { gmailStatus } from './lib/discovery'
 import './App.css'
 
 function Brand() {
@@ -120,36 +125,38 @@ function PageHeading({ title, children }: { title: string; children: ReactNode }
 const checklist = [
   { title: 'Account sign-in', detail: 'Your Supabase account is signed in.', status: 'Ready', ready: true },
   { title: 'Personal workspace', detail: 'Dashboard, jobs, applications, and settings are in place.', status: 'Ready', ready: true },
-  { title: 'Job sources', detail: 'Source configuration and importing arrive in a later phase.', status: 'Not configured', ready: false },
-  { title: 'Gmail connection', detail: 'Gmail is not connected. Email sending is unavailable.', status: 'Not connected', ready: false },
   { title: 'Scheduled automation', detail: 'No scheduled workers or background runs exist yet.', status: 'Not implemented', ready: false },
 ]
 
 function Dashboard({ session }: { session: Session }) {
   const { data, loading, error, refresh, online, dirty } = useWorkspace()
+  const discovery = useDiscovery()
+  const discoveryUnknown = discovery.error ? 'Unavailable' : !data?.owner ? 'Owner setup needed' : !discovery.data ? 'Checking…' : null
+  const sourceCount = discovery.data?.sources.filter(source => source.kind !== 'manual' && source.enabled).length ?? 0
   const unknown = loading ? 'Checking…' : error ? 'Unavailable' : !data?.owner ? 'Owner setup needed' : null
   const persisted = [
     { title: 'Owner profile', detail: data?.profile ? 'A profile is saved. Review details and preferences in Profile.' : 'Add your contact details, experience, and preferences in Profile.', status: unknown ?? (data?.profile ? 'Saved' : 'Not saved'), ready: !unknown && !!data?.profile },
     { title: 'Private resume', detail: 'Upload a private PDF and choose a default in Resumes.', status: unknown ?? (data?.defaultId ? 'Default selected' : data?.resumes.some(item => item.status === 'ready') ? 'Choose a default' : 'No ready resume'), ready: !unknown && !!data?.defaultId },
+    { title: 'Job sources', detail: 'Manage Gmail labels and Greenhouse boards in Settings. Import on demand from Jobs.', status: discoveryUnknown ?? `${sourceCount} enabled`, ready: !discoveryUnknown && sourceCount > 0 },
+    { title: 'Gmail connection', detail: 'Read-only access for your chosen label. Check Gmail access in Settings to verify with Google.', status: discoveryUnknown ?? gmailStatus(discovery.data?.connection ?? null), ready: !discoveryUnknown && discovery.data?.connection?.status === 'connected' },
   ]
   return <><PageHeading title="Welcome to your workspace.">A little structure for your next career move.</PageHeading>
     <div className="welcome-note"><span className="status-dot" aria-hidden="true" /><p>Signed in as <strong className="wrap-anywhere">{session.user.email ?? 'your Supabase account'}</strong></p></div>
     {error && <p className="error-message" role="alert">{error}</p>}
-    <section className="panel" aria-labelledby="setup-heading"><div className="section-heading"><div><h2 id="setup-heading">Your setup checklist</h2><p>Profile and resume status reflect your saved data.</p></div><span className="badge">Phase 2</span></div>
+    <section className="panel" aria-labelledby="setup-heading"><div className="section-heading"><div><h2 id="setup-heading">Your setup checklist</h2><p>Status reflects your saved workspace data.</p></div><span className="badge">Phase 3</span></div>
       <ul className="checklist">{[...checklist.slice(0, 2), ...persisted, ...checklist.slice(2)].map(item => <li key={item.title}>
         <span className={item.ready ? 'check-icon ready' : 'check-icon'}>{item.ready ? <Check size={19} aria-hidden="true" /> : <Circle size={19} aria-hidden="true" />}</span>
         <div className="check-copy"><h3>{item.title}</h3><p>{item.detail}</p></div><span className={item.ready ? 'badge badge-ready' : 'badge'}>{item.status}</span>
       </li>)}</ul>
     </section>
-    <section className="next-step" aria-labelledby="next-heading"><h2 id="next-heading">Prepare your profile and resume</h2><p>Job discovery and application tools arrive in later phases. {dirty ? 'You have unsaved profile changes.' : ''}</p><div className="action-row"><Link className="text-link" to="/profile">Edit profile <ArrowRight size={18} aria-hidden="true" /></Link><Link className="text-link" to="/resumes">Manage resumes</Link><button className="button button-secondary" disabled={loading || !online} onClick={() => void refresh()}>Refresh status</button></div></section>
+    <section className="next-step" aria-labelledby="next-heading"><h2 id="next-heading">Explore jobs against your preferences</h2><p>Save your profile, import opportunities, and review the evidence behind each match. Applications arrive in Phase 4. {dirty ? 'You have unsaved profile changes.' : ''}</p><div className="action-row"><Link className="text-link" to="/jobs">Browse jobs</Link><Link className="text-link" to="/profile">Edit profile <ArrowRight size={18} aria-hidden="true" /></Link><Link className="text-link" to="/resumes">Manage resumes</Link><button className="button button-secondary" disabled={loading || discovery.loading || !online} onClick={() => { void refresh(); void discovery.refresh() }}>Refresh status</button></div></section>
   </>
 }
 
-function EmptyPage({ jobs = false }: { jobs?: boolean }) {
-  const Icon = jobs ? BriefcaseBusiness : Send
-  return <><PageHeading title={jobs ? 'Jobs' : 'Applications'}>{jobs ? 'A place for opportunities worth exploring.' : 'Keep your job-search progress in one place.'}</PageHeading>
-    <section className="panel empty-state"><Icon size={38} strokeWidth={1.5} aria-hidden="true" /><h2>{jobs ? 'Your opportunities will live here.' : 'No applications have been sent.'}</h2>
-      <p>{jobs ? 'Job sources and importing are coming in a later phase. There are no jobs to browse yet.' : 'Application preparation, sending, and tracking are coming in a later phase. JobPilot cannot send emails yet.'}</p>
+function EmptyPage() {
+  return <><PageHeading title="Applications">Keep your job-search progress in one place.</PageHeading>
+    <section className="panel empty-state"><Send size={38} strokeWidth={1.5} aria-hidden="true" /><h2>No applications have been sent.</h2>
+      <p>Application preparation, sending, and tracking are coming in Phase 4. JobPilot cannot send emails yet.</p>
       <Link className="text-link" to="/dashboard">View setup checklist <ArrowRight size={18} aria-hidden="true" /></Link>
     </section></>
 }
@@ -168,6 +175,7 @@ function SettingsPage({ session, client }: { session: Session; client: SupabaseC
     finally { setBusy(false) }
   }
   return <><PageHeading title="Settings">Your account and workspace connections.</PageHeading>
+    <SourceSettings />
     <section className="panel settings-section"><h2>Your application details</h2><p>Manage your saved background and private PDFs. {dirty ? 'Your profile has unsaved changes.' : ''}</p><div className="action-row"><Link className="text-link" to="/profile">Profile</Link><Link className="text-link" to="/resumes">Resumes</Link></div></section>
     <section className="panel settings-section"><h2>Install on your phone</h2><p><strong>Android:</strong> Open your deployed HTTPS site in Chrome. Open the browser menu, then choose “Install app” or “Add to Home screen”.</p><p><strong>iPhone:</strong> Open the site in Safari. Tap Share, then “Add to Home Screen” and Add. Enable “Open as Web App” if offered.</p><p className="fine-print">Installation availability depends on your browser. Sign in on each device. Only the public app shell works offline; private data needs a connection. Installation does not enable background job automation.</p></section>
     <section className="panel settings-section" aria-labelledby="account-heading"><h2 id="account-heading">Account</h2><p className="muted">Signed in with email and password</p><p className="account-value">{session.user.email ?? 'Email unavailable'}</p>
@@ -175,7 +183,6 @@ function SettingsPage({ session, client }: { session: Session; client: SupabaseC
       <p className="fine-print">Signs out of this browser session.</p>{error && <p className="error-message" role="alert">{error}</p>}
     </section>
     <section className="panel settings-section" aria-labelledby="connections-heading"><h2 id="connections-heading">Connections & automation</h2>
-      <div className="setting-row"><Mail size={22} aria-hidden="true" /><div><h3>Gmail</h3><p>Connecting an account and sending email arrive in a later phase.</p></div><span className="badge">Not connected</span></div>
       <div className="setting-row"><Circle size={22} aria-hidden="true" /><div><h3>Automation</h3><p>No scheduled tasks run in the background.</p></div><span className="badge">Not implemented</span></div>
     </section></>
 }
@@ -187,7 +194,7 @@ function NotFound({ signedIn }: { signedIn: boolean }) {
 
 function Protected({ session, client }: { session: Session | null; client: SupabaseClient }) {
   const location = useLocation()
-  return session ? <WorkspaceProvider key={session.user.id} ownerId={session.user.id} client={client}><Shell session={session} /></WorkspaceProvider> : <Navigate to="/login" state={{ from: location.pathname }} replace />
+  return session ? <WorkspaceProvider key={session.user.id} ownerId={session.user.id} client={client}><DiscoveryProvider><Shell session={session} /></DiscoveryProvider></WorkspaceProvider> : <Navigate to="/login" state={{ from: location.pathname }} replace />
 }
 
 function AuthenticatedApp({ client }: { client: SupabaseClient }) {
@@ -205,7 +212,7 @@ function AuthenticatedApp({ client }: { client: SupabaseClient }) {
       <Route path="/profile" element={<ProfilePage />} />
       <Route path="/resumes" element={<ResumesPage />} />
       <Route path="/dashboard" element={auth.session && <Dashboard session={auth.session} />} />
-      <Route path="/jobs" element={<EmptyPage jobs />} />
+      <Route path="/jobs" element={<JobsPage />} />
       <Route path="/applications" element={<EmptyPage />} />
       <Route path="/settings" element={auth.session && <SettingsPage key={auth.session.user.id} session={auth.session} client={client} />} />
     </Route>

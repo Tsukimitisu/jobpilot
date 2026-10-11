@@ -11,24 +11,27 @@ web
 A personal job-search assistant for one owner, intended to bring job discovery,
 application preparation, Gmail delivery, and application tracking into one workspace.
 
-## Current implementation: Phase 2
+## Current implementation: Phase 3
 
 Supabase email/password authentication for a pre-created account, protected routes,
 a responsive application shell, administrator-appointed single-owner RLS, a persistent
-profile, private PDF resumes, and a privacy-safe installable PWA shell. Database
-migrations and Vercel deployment instructions are prepared separately. Hosted setup
-is owner-run after review. No jobs are imported and no application emails are sent.
+profile, private PDF resumes, and a privacy-safe installable PWA shell. Read-only Gmail
+OAuth, one confirmed Gmail label, configured Greenhouse boards, manual job entry,
+import history, conservative parsing, deterministic preference matching, and
+save/dismiss/review state extend the workspace. Hosted setup is owner-run after
+review; see PHASE3.md. No application emails, submissions, or scheduled work run.
 
 ## Intended complete product (future work)
 
-- Discover jobs from configured sources and track applications.
+- Prepare and track applications from reviewed jobs.
 - Support AI-assisted application preparation using explicitly approved data.
-- Connect Gmail using backend-held credentials and refresh tokens.
+- Extend the read-only Gmail connection only with explicit approval of sending.
 - Run scheduled work through Supabase Edge Functions and Cron while the laptop is off.
 - Extend the installable app with future online job-search workflows.
 
-Source selection, AI provider, application approval rules, schedules, and future
-database policies remain design decisions for later phases.
+AI provider, application approval rules, sending permissions, schedules, and future
+database policies remain design decisions for later phases. Phase 3 sources are
+limited to manual entry, one selected Gmail label, and configured Greenhouse boards.
 
 ## Constraints
 

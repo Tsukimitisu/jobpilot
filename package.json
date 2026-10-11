@@ -11,6 +11,8 @@
     "preview": "vite preview",
     "verify:pwa": "node scripts/verify-pwa.mjs",
     "test:storage:local": "node scripts/check-local-storage.mjs",
+    "test:discovery:local": "node scripts/check-local-discovery.mjs",
+    "check:edge": "tsc --ignoreConfig --noEmit --strict --target es2023 --module esnext --moduleResolution bundler --allowImportingTsExtensions --skipLibCheck supabase/functions/_shared/service.ts",
     "test:browser": "node scripts/check-browser.mjs"
   },
   "dependencies": {

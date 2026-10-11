@@ -1,4 +1,24 @@
 ﻿.brand { display: inline-flex; align-items: center; gap: 8px; font-size: 1.5rem; font-weight: 700; letter-spacing: -.04em; color: #233c2e; }
+.discovery-toolbar { margin-bottom: 24px; }
+.main-content > .notice { margin-bottom: 24px; }
+.source-list { list-style: none; padding: 0; }
+.source-list > li { padding: 24px 0; border-top: 1px solid var(--border); }
+summary { cursor: pointer; min-height: 48px; padding: 10px 0; font-weight: 600; }
+details > p, details > ul { margin-block: 12px; }
+.job-filters { margin: 32px 0 20px; }
+.results-count { margin: 20px 0; }
+.job-list { display: grid; gap: 24px; margin-bottom: 24px; }
+.job-item { padding: 24px 20px; min-width: 0; scroll-margin-top: 24px; }
+.job-item > p { margin-top: 12px; }
+.job-item details { border-top: 1px solid var(--border); margin-top: 16px; }
+.job-fit { display: grid; gap: 16px; margin: 24px 0 12px; }
+.job-fit dt { font-weight: 600; }
+.job-fit dd { margin: 4px 0 0; }
+.job-description { white-space: pre-wrap; max-width: 75ch; }
+@media (min-width: 640px) {
+  .job-item { padding: 28px; }
+  .job-fit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .brand svg, .brand-dot { color: var(--green); }
 .brand-dot { margin-left: -8px; }
 .brand-link { text-decoration: none; display: inline-flex; min-height: 48px; align-items: center; }
