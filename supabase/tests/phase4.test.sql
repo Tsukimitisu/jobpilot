@@ -1,0 +1,88 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+set search_path = public,extensions;
+select no_plan();
+select is((select count(*)::int from jobpilot_private.owner_registration),0,'requires unbootstrapped local database');
+insert into auth.users(id) values('60000000-0000-0000-0000-000000000001'),('60000000-0000-0000-0000-000000000002');
+insert into jobpilot_private.owner_registration(user_id) values('60000000-0000-0000-0000-000000000001');
+insert into public.imported_jobs(id,owner_id,description) values('61000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000001','Synthetic job');
+insert into public.job_reviews(owner_id,job_id) values('60000000-0000-0000-0000-000000000001','61000000-0000-0000-0000-000000000001');
+insert into public.resumes(id,owner_id,object_path,original_name,byte_size,status) values
+('62000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000001/62000000-0000-0000-0000-000000000001.pdf','fixture.pdf',100,'ready'),
+('62000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000002/62000000-0000-0000-0000-000000000002.pdf','other.pdf',100,'ready');
+create function pg_temp.cmd(action text, data jsonb default '{}') returns public.applications language sql as $$
+ select public.application_command('60000000-0000-0000-0000-000000000001',action,(select id from public.applications),(select revision from public.applications),data);
+$$;
+select ok((select relrowsecurity from pg_class where oid='public.applications'::regclass),'applications has RLS');
+select ok(not has_table_privilege('anon','public.applications','SELECT'),'anonymous cannot read applications');
+select ok(not has_table_privilege('authenticated','public.applications','INSERT,UPDATE,DELETE'),'browser cannot forge application states');
+select ok(not has_function_privilege('authenticated',p.oid,'EXECUTE'),'browser cannot execute '||p.proname)
+ from pg_proc p where p.pronamespace='public'::regnamespace and p.proname in ('application_command','begin_gmail_oauth_v4','consume_gmail_state_v4','finish_gmail_oauth_v4','disconnect_gmail_v4');
+select throws_ok($$select public.application_command('60000000-0000-0000-0000-000000000002','create',null,null,'{}')$$,'P0001','owner_required','non-owner backend call denied');
+select throws_ok($$select public.application_command('60000000-0000-0000-0000-000000000001','create',null,null,'{"job_id":"61000000-0000-0000-0000-000000000001","subject":"Fixture","body":"Fixture body"}')$$,'P0001','job_review_required','unreviewed unsaved job rejected');
+update public.job_reviews set disposition='saved';
+select public.application_command('60000000-0000-0000-0000-000000000001','create',null,null,'{"job_id":"61000000-0000-0000-0000-000000000001","subject":"Fixture","body":"Fixture body"}');
+select public.application_command('60000000-0000-0000-0000-000000000001','create',null,null,'{"job_id":"61000000-0000-0000-0000-000000000001","subject":"Duplicate","body":"Duplicate"}');
+select is((select count(*)::int from public.applications),1,'duplicate create returns one application per job');
+select is((select recipient from public.applications),'','recipient starts empty');
+select is((select subject from public.applications),'Fixture','duplicate creation preserves edited draft');
+select throws_ok($$select pg_temp.cmd('ready','{"resume_sha256":"fixture"}')$$,'P0001','invalid_application','missing recipient cannot become ready');
+select throws_ok($$select pg_temp.cmd('save','{"recipient":"a@example.invalid","recipient_verified":true,"subject":"Fixture","body":"Fixture","resume_id":"62000000-0000-0000-0000-000000000002"}')$$,'23503',null,'cross-owner resume rejected by composite FK');
+select pg_temp.cmd('save','{"recipient":"a@example.invalid","recipient_verified":true,"subject":"Fixture","body":"Fixture","resume_id":null}');
+select throws_ok($$select pg_temp.cmd('ready','{"resume_sha256":"fixture"}')$$,'P0001','resume_unavailable','missing resume cannot become ready');
+select pg_temp.cmd('save','{"recipient":"a@example.invalid","recipient_verified":true,"subject":"Fixture","body":"Fixture","resume_id":"62000000-0000-0000-0000-000000000001"}');
+select pg_temp.cmd('ready','{"resume_sha256":"fixture"}');
+select throws_ok($$select pg_temp.cmd('reserve')$$,'P0001','send_consent_required','old connection cannot send');
+
+-- Consent upgrade does not destroy the current readonly connection or credential.
+insert into public.gmail_connections(owner_id,expected_email,connected_email,status,generation) values('60000000-0000-0000-0000-000000000001','owner@example.invalid','owner@example.invalid','connected','63000000-0000-0000-0000-000000000001');
+insert into public.gmail_credentials values('60000000-0000-0000-0000-000000000001','inert-existing-ciphertext','63000000-0000-0000-0000-000000000001');
+select public.begin_gmail_oauth_v4('60000000-0000-0000-0000-000000000001','owner@example.invalid','inert-hash','inert-verifier',true);
+select is((select encrypted_refresh_token from public.gmail_credentials),'inert-existing-ciphertext','begin consent preserves active token');
+select is((select status from public.gmail_connections),'connected','begin consent preserves import connection');
+select is((select count(*)::int from public.consume_gmail_state_v4('inert-hash')),1,'fresh upgrade state consumed');
+select is((select count(*)::int from public.consume_gmail_state_v4('inert-hash')),0,'upgrade state cannot replay');
+select is((select encrypted_refresh_token from public.gmail_credentials),'inert-existing-ciphertext','cancelled consumed consent preserves token');
+select throws_ok($$select public.finish_gmail_oauth_v4('60000000-0000-0000-0000-000000000001',(select pending_generation from public.gmail_connections),'owner@example.invalid','new-inert',array['https://www.googleapis.com/auth/gmail.readonly'],true)$$,'P0001','scope_mismatch','partial scope cannot enable sending');
+select ok(public.finish_gmail_oauth_v4('60000000-0000-0000-0000-000000000001',(select pending_generation from public.gmail_connections),'owner@example.invalid','new-inert',array['https://www.googleapis.com/auth/gmail.readonly','https://www.googleapis.com/auth/gmail.send'],true),'fresh dual scope consent committed');
+select ok((select send_consented_at is not null from public.gmail_connections),'fresh consent timestamp persisted');
+select throws_ok($$select pg_temp.cmd('reserve')$$,'P0001','send_consent_required','old review cannot send after account generation changed');
+select pg_temp.cmd('save','{"recipient":"a@example.invalid","recipient_verified":true,"subject":"Fixture","body":"Fixture","resume_id":"62000000-0000-0000-0000-000000000001"}');
+select pg_temp.cmd('ready','{"resume_sha256":"fixture"}');
+select pg_temp.cmd('reserve');
+select is((select status from public.applications),'sending','reservation transitions ready to sending');
+select throws_ok($$select pg_temp.cmd('reserve')$$,'P0001','application_locked','duplicate reservation cannot send twice');
+select throws_ok($$select pg_temp.cmd('save','{}')$$,'P0001','application_locked','reserved snapshot cannot be edited');
+select throws_ok($$select pg_temp.cmd('finish','{"status":"sent","attempt_id":"64000000-0000-0000-0000-000000000001"}')$$,'P0001','application_locked','wrong attempt cannot complete');
+select pg_temp.cmd('stale');
+select is((select status from public.applications),'sending','fresh sending is not treated as timed out');
+update public.applications set sending_at=now()-interval '4 minutes';
+select pg_temp.cmd('stale');
+select is((select status from public.applications),'delivery_unknown','interrupted execution becomes unknown on refresh');
+select throws_ok($$select pg_temp.cmd('reserve')$$,'P0001','application_locked','unknown delivery cannot retry');
+select throws_ok($$select pg_temp.cmd('reconcile','{"outcome":"sent","note":"short"}')$$,'P0001','reconciliation_required','reconciliation requires evidence note');
+select pg_temp.cmd('reconcile','{"outcome":"not_found","note":"Checked Sent manually; no result yet"}');
+select is((select status from public.applications),'delivery_unknown','negative search never unlocks send');
+select pg_temp.cmd('reconcile','{"outcome":"sent","note":"Found matching message in Gmail Sent"}');
+select is((select status from public.applications),'sent','manual positive reconciliation recorded');
+select ok((select gmail_message_id is null and reconciled_at is not null from public.applications),'manual reconciliation does not fabricate Gmail ID');
+select throws_ok($$select pg_temp.cmd('reserve')$$,'P0001','application_locked','sent application never re-reserved');
+select throws_ok($$delete from public.resumes where id='62000000-0000-0000-0000-000000000001'$$,'23503',null,'referenced resume metadata cannot disappear');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub','60000000-0000-0000-0000-000000000001',true);
+select is((select count(*)::int from public.applications),1,'owner reads applications');
+select throws_ok($$update public.applications set status='sent'$$,'42501',null,'owner cannot forge sending state');
+select throws_ok($$select * from public.gmail_credentials$$,'42501',null,'owner cannot read credentials');
+select set_config('request.jwt.claim.sub','60000000-0000-0000-0000-000000000002',true);
+select is((select count(*)::int from public.applications),0,'other authenticated user cannot read applications');
+select throws_ok($$select public.application_command('60000000-0000-0000-0000-000000000001','reserve',null,1,'{}')$$,'42501',null,'non-owner cannot call privileged RPC');
+reset role;
+select public.begin_gmail_oauth_v4('60000000-0000-0000-0000-000000000001','owner@example.invalid','disconnect-hash','inert',true);
+select public.disconnect_gmail_v4('60000000-0000-0000-0000-000000000001');
+select is((select count(*)::int from public.consume_gmail_state_v4('disconnect-hash')),0,'disconnect invalidates pending upgrade');
+select ok((select send_consented_at is null and granted_scopes='{}' from public.gmail_connections),'disconnect clears sending consent');
+select is((select count(*)::int from public.imported_jobs),1,'Gmail upgrade/disconnect preserves imported jobs');
+select is((select count(*)::int from public.applications),1,'disconnect preserves application history');
+select * from finish();
+rollback;

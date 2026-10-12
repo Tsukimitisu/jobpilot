@@ -1,11 +1,23 @@
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { authorizationUrl, decryptToken, encryptToken, gmailScope, googleTokens, hash, messageText, randomSecret, verifyGmailIdentity } from '../supabase/functions/_shared/google'
+import { authorizationUrl, decryptToken, encryptToken, gmailScope, gmailSendScope, googleTokens, hash, messageText, randomSecret, verifyGmailIdentity } from '../supabase/functions/_shared/google'
 const config = { clientId: 'fixture-client', clientSecret: 'fixture-secret', redirectUri: 'https://example.invalid/functions/v1/gmail-callback', encryptionKey: '' }
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 beforeEach(() => { vi.stubGlobal('crypto', webcrypto); vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Live network prohibited') })) })
 afterEach(() => vi.unstubAllGlobals())
 describe('Gmail OAuth with inert fixtures, not live Google', () => {
+  it('requests exactly readonly plus send only for an explicit upgrade', () => {
+    const url = new URL(authorizationUrl(config,'state','challenge','owner@example.invalid',true))
+    expect(url.searchParams.get('scope')).toBe(`${gmailScope} ${gmailSendScope}`)
+    expect(url.searchParams.get('prompt')).toContain('consent')
+  })
+  it('rejects partial sending consent and verifies scopes on refreshed tokens when supplied', async () => {
+    for (const grant_type of ['authorization_code','refresh_token']) {
+      await expect(googleTokens(config,{grant_type},vi.fn().mockResolvedValue(response({access_token:'inert',expires_in:3600,scope:gmailScope})),true)).rejects.toThrow('scope_mismatch')
+    }
+    const result=await googleTokens(config,{grant_type:'authorization_code'},vi.fn().mockResolvedValue(response({access_token:'inert',expires_in:3600,scope:`${gmailScope} ${gmailSendScope}`})),true)
+    expect(result.scopes).toEqual([gmailScope,gmailSendScope])
+  })
   it('requests offline read-only access, PKCE and a random state without secrets', async () => {
     const state = randomSecret(), verifier = randomSecret()
     expect(state).not.toBe(randomSecret()); expect(state.length).toBe(43)
@@ -31,8 +43,8 @@ describe('Gmail OAuth with inert fixtures, not live Google', () => {
     const transport = vi.fn().mockResolvedValue(response({ error: 'invalid_grant' }, 400))
     await expect(googleTokens(config, { grant_type: 'refresh_token', refresh_token: 'inert' }, transport)).rejects.toThrow('reconnect_required')
   })
-  it('rejects missing scope, expired token responses, and unexpected send grants', async () => {
-    for (const data of [{ access_token: 'inert', expires_in: 0 }, { access_token: 'inert', expires_in: 3600, scope: gmailScope + ' https://www.googleapis.com/auth/gmail.send' }, { access_token: 'inert', expires_in: 3600, scope: '' }]) {
+  it('rejects missing scope, expired token responses, and broader Gmail grants', async () => {
+    for (const data of [{ access_token: 'inert', expires_in: 0 }, { access_token: 'inert', expires_in: 3600, scope: gmailScope + ' https://www.googleapis.com/auth/gmail.modify' }, { access_token: 'inert', expires_in: 3600, scope: '' }]) {
       await expect(googleTokens(config, { grant_type: 'authorization_code' }, vi.fn().mockResolvedValue(response(data)))).rejects.toThrow()
     }
   })

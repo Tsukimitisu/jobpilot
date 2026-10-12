@@ -146,3 +146,8 @@ a:active { text-decoration: underline; }
   .setting-row .badge { grid-column: 3; align-self: start; }
 }
 
+.application-editor { padding: 24px; overflow-wrap: anywhere; }
+.application-editor .field { margin-top: 20px; }
+.email-review { margin-top: 24px; }
+.email-body { white-space: pre-wrap; overflow-wrap: anywhere; margin-block: 24px; }
+.application-editor .choice-list label { align-items: flex-start; }

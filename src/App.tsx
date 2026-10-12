@@ -14,6 +14,7 @@ import { DiscoveryProvider } from './workspace/DiscoveryProvider'
 import { useDiscovery } from './workspace/useDiscovery'
 import { JobsPage } from './workspace/JobsPage'
 import { SourceSettings } from './workspace/SourceSettings'
+import { ApplicationsPage } from './workspace/ApplicationsPage'
 import { gmailStatus } from './lib/discovery'
 import './App.css'
 
@@ -138,27 +139,19 @@ function Dashboard({ session }: { session: Session }) {
     { title: 'Owner profile', detail: data?.profile ? 'A profile is saved. Review details and preferences in Profile.' : 'Add your contact details, experience, and preferences in Profile.', status: unknown ?? (data?.profile ? 'Saved' : 'Not saved'), ready: !unknown && !!data?.profile },
     { title: 'Private resume', detail: 'Upload a private PDF and choose a default in Resumes.', status: unknown ?? (data?.defaultId ? 'Default selected' : data?.resumes.some(item => item.status === 'ready') ? 'Choose a default' : 'No ready resume'), ready: !unknown && !!data?.defaultId },
     { title: 'Job sources', detail: 'Manage Gmail labels and Greenhouse boards in Settings. Import on demand from Jobs.', status: discoveryUnknown ?? `${sourceCount} enabled`, ready: !discoveryUnknown && sourceCount > 0 },
-    { title: 'Gmail connection', detail: 'Read-only access for your chosen label. Check Gmail access in Settings to verify with Google.', status: discoveryUnknown ?? gmailStatus(discovery.data?.connection ?? null), ready: !discoveryUnknown && discovery.data?.connection?.status === 'connected' },
+    { title: 'Gmail connection', detail: 'Imports use your chosen label. Sending requires separate consent and confirmation. Check access in Settings.', status: discoveryUnknown ?? gmailStatus(discovery.data?.connection ?? null), ready: !discoveryUnknown && discovery.data?.connection?.status === 'connected' },
   ]
   return <><PageHeading title="Welcome to your workspace.">A little structure for your next career move.</PageHeading>
     <div className="welcome-note"><span className="status-dot" aria-hidden="true" /><p>Signed in as <strong className="wrap-anywhere">{session.user.email ?? 'your Supabase account'}</strong></p></div>
     {error && <p className="error-message" role="alert">{error}</p>}
-    <section className="panel" aria-labelledby="setup-heading"><div className="section-heading"><div><h2 id="setup-heading">Your setup checklist</h2><p>Status reflects your saved workspace data.</p></div><span className="badge">Phase 3</span></div>
+    <section className="panel" aria-labelledby="setup-heading"><div className="section-heading"><div><h2 id="setup-heading">Your setup checklist</h2><p>Status reflects your saved workspace data.</p></div><span className="badge">Phase 4</span></div>
       <ul className="checklist">{[...checklist.slice(0, 2), ...persisted, ...checklist.slice(2)].map(item => <li key={item.title}>
         <span className={item.ready ? 'check-icon ready' : 'check-icon'}>{item.ready ? <Check size={19} aria-hidden="true" /> : <Circle size={19} aria-hidden="true" />}</span>
         <div className="check-copy"><h3>{item.title}</h3><p>{item.detail}</p></div><span className={item.ready ? 'badge badge-ready' : 'badge'}>{item.status}</span>
       </li>)}</ul>
     </section>
-    <section className="next-step" aria-labelledby="next-heading"><h2 id="next-heading">Explore jobs against your preferences</h2><p>Save your profile, import opportunities, and review the evidence behind each match. Applications arrive in Phase 4. {dirty ? 'You have unsaved profile changes.' : ''}</p><div className="action-row"><Link className="text-link" to="/jobs">Browse jobs</Link><Link className="text-link" to="/profile">Edit profile <ArrowRight size={18} aria-hidden="true" /></Link><Link className="text-link" to="/resumes">Manage resumes</Link><button className="button button-secondary" disabled={loading || discovery.loading || !online} onClick={() => { void refresh(); void discovery.refresh() }}>Refresh status</button></div></section>
+    <section className="next-step" aria-labelledby="next-heading"><h2 id="next-heading">Review a job, prepare an application</h2><p>Save your profile, import opportunities, and create a draft from a saved or reviewed job. {dirty ? 'You have unsaved profile changes.' : ''}</p><div className="action-row"><Link className="text-link" to="/jobs">Browse jobs</Link><Link className="text-link" to="/profile">Edit profile <ArrowRight size={18} aria-hidden="true" /></Link><Link className="text-link" to="/resumes">Manage resumes</Link><button className="button button-secondary" disabled={loading || discovery.loading || !online} onClick={() => { void refresh(); void discovery.refresh() }}>Refresh status</button></div></section>
   </>
-}
-
-function EmptyPage() {
-  return <><PageHeading title="Applications">Keep your job-search progress in one place.</PageHeading>
-    <section className="panel empty-state"><Send size={38} strokeWidth={1.5} aria-hidden="true" /><h2>No applications have been sent.</h2>
-      <p>Application preparation, sending, and tracking are coming in Phase 4. JobPilot cannot send emails yet.</p>
-      <Link className="text-link" to="/dashboard">View setup checklist <ArrowRight size={18} aria-hidden="true" /></Link>
-    </section></>
 }
 
 function SettingsPage({ session, client }: { session: Session; client: SupabaseClient }) {
@@ -213,7 +206,7 @@ function AuthenticatedApp({ client }: { client: SupabaseClient }) {
       <Route path="/resumes" element={<ResumesPage />} />
       <Route path="/dashboard" element={auth.session && <Dashboard session={auth.session} />} />
       <Route path="/jobs" element={<JobsPage />} />
-      <Route path="/applications" element={<EmptyPage />} />
+      <Route path="/applications" element={<ApplicationsPage />} />
       <Route path="/settings" element={auth.session && <SettingsPage key={auth.session.user.id} session={auth.session} client={client} />} />
     </Route>
     <Route path="*" element={<NotFound signedIn={!!auth.session} />} />

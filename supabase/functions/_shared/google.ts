@@ -1,4 +1,5 @@
 export const gmailScope = 'https://www.googleapis.com/auth/gmail.readonly'
+export const gmailSendScope = 'https://www.googleapis.com/auth/gmail.send'
 export class ServiceError extends Error {
   code: string
   constructor(code: string) { super(code); this.code = code }
@@ -26,10 +27,10 @@ export async function decryptToken(value: string, owner: string, secret: string)
     return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: decode(iv), additionalData: new TextEncoder().encode(owner) }, await key(secret), decode(ciphertext)))
   } catch { throw new ServiceError('backend_configuration') }
 }
-export function authorizationUrl(config: GoogleConfig, state: string, challenge: string, email: string) {
+export function authorizationUrl(config: GoogleConfig, state: string, challenge: string, email: string, send = false) {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth')
   url.search = new URLSearchParams({ client_id: config.clientId, redirect_uri: config.redirectUri, response_type: 'code',
-    scope: gmailScope, access_type: 'offline', prompt: 'consent select_account', include_granted_scopes: 'false',
+    scope: send ? `${gmailScope} ${gmailSendScope}` : gmailScope, access_type: 'offline', prompt: 'consent select_account', include_granted_scopes: 'false',
     state, code_challenge: challenge, code_challenge_method: 'S256', login_hint: email }).toString()
   return url.href
 }
@@ -63,14 +64,14 @@ export async function fetchJson(url: string, init: RequestInit = {}, transport: 
   }
   return data
 }
-export async function googleTokens(config: GoogleConfig, grant: Record<string, string>, transport: typeof fetch = fetch) {
+export async function googleTokens(config: GoogleConfig, grant: Record<string, string>, transport: typeof fetch = fetch, send = false) {
   const data = await fetchJson('https://oauth2.googleapis.com/token', { method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ ...grant, client_id: config.clientId, client_secret: config.clientSecret }) }, transport)
   if (typeof data.access_token !== 'string' || !data.access_token || typeof data.expires_in !== 'number' || data.expires_in <= 0) throw new ServiceError('token_failure')
   const scopes = typeof data.scope === 'string' ? data.scope.split(' ') : []
-  if ((grant.grant_type === 'authorization_code' || typeof data.scope === 'string') && (!scopes.includes(gmailScope) || scopes.some(scope => scope.includes('/auth/gmail.') && scope !== gmailScope) || scopes.includes('https://mail.google.com/'))) throw new ServiceError('scope_mismatch')
-  return { accessToken: data.access_token, refreshToken: typeof data.refresh_token === 'string' ? data.refresh_token : null }
+  if ((grant.grant_type === 'authorization_code' || typeof data.scope === 'string') && (!scopes.includes(gmailScope) || (send && !scopes.includes(gmailSendScope)) || scopes.some(scope => scope.includes('/auth/gmail.') && scope !== gmailScope && scope !== gmailSendScope) || scopes.includes('https://mail.google.com/'))) throw new ServiceError('scope_mismatch')
+  return { accessToken: data.access_token, refreshToken: typeof data.refresh_token === 'string' ? data.refresh_token : null, scopes }
 }
 export async function gmailGet(path: string, accessToken: string, transport: typeof fetch = fetch) {
   return fetchJson(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`, { headers: { Authorization: `Bearer ${accessToken}` } }, transport)

@@ -6,7 +6,7 @@ export type Source = { id: string; kind: 'gmail' | 'greenhouse' | 'manual'; sour
 export type ImportRun = { id: string; source_id: string; status: string; started_at: string; finished_at: string | null; imported_count: number; duplicate_count: number; error_code: string | null }
 export type Origin = { id: string; job_id: string; source_id: string; source_url: string | null; message_id: string | null; sender: string | null; source_date: string | null }
 export type Review = { job_id: string; disposition: 'new' | 'saved' | 'dismissed'; reviewed: boolean }
-export type GmailConnection = { status: 'connected' | 'disconnected' | 'reconnect_required'; expected_email: string; connected_email: string | null; checked_at: string | null; error_code: string | null }
+export type GmailConnection = { status: 'connected' | 'disconnected' | 'reconnect_required'; expected_email: string; connected_email: string | null; checked_at: string | null; error_code: string | null; granted_scopes?: string[]; send_consented_at?: string | null }
 export type Discovery = { connection: GmailConnection | null; sources: Source[]; runs: ImportRun[]; jobs: Job[]; origins: Origin[]; reviews: Review[]; more: boolean }
 export const errorMessages: Record<string, string> = {
   invalid_state: 'This Gmail connection link expired or was already used. Start Connect Gmail again.',
@@ -15,7 +15,20 @@ export const errorMessages: Record<string, string> = {
   reconnect_required: 'Google access expired or was revoked. Reconnect Gmail to continue.',
   gmail_disconnected: 'Gmail is disconnected. Connect it in Settings first.',
   offline_access_missing: 'Google did not return offline access. Remove the old JobPilot grant in your Google Account, then reconnect.',
-  scope_mismatch: 'The Google grant is not read-only as expected. Remove the old grant and reconnect with the dedicated Phase 3 OAuth client.',
+  scope_mismatch: 'Google did not grant the required permissions. Reconnect in Settings and approve the requested access.',
+  send_consent_required: 'Fresh Gmail sending consent is required. Enable sending in Settings, then edit and review this draft again.',
+  application_changed: 'This application changed in another request or tab. Refresh applications before continuing.',
+  application_locked: 'This application cannot be edited or sent in its current state. Refresh applications to check its status.',
+  application_not_found: 'This application could not be found. Refresh applications.',
+  invalid_application: 'Check the recipient, subject, body, resume selection, and any tracking date.',
+  job_review_required: 'Save or review this job before creating a draft.',
+  resume_unavailable: 'The selected PDF is missing or inaccessible. Choose a ready resume and review again.',
+  resume_changed: 'The PDF no longer matches the reviewed attachment. Edit and review again.',
+  confirmation_required: 'Review the final email and explicitly confirm before sending.',
+  reconciliation_required: 'Check Gmail Sent manually and add a reconciliation note of at least 10 characters.',
+  send_permission_denied: 'Google rejected sending permission. Reconnect Gmail with sending consent before reviewing again.',
+  gmail_rejected: 'Gmail rejected this email. Check the recipient and attachment, then explicitly edit and review before another attempt.',
+  delivery_unknown: 'Gmail may have accepted this email. Check Gmail Sent manually. JobPilot will not resend it.',
   token_failure: 'Google returned an unusable token. Try reconnecting Gmail.',
   backend_configuration: 'Gmail backend secrets are missing or invalid. Check the Phase 3 setup instructions.',
   provider_unavailable: 'The source could not be reached. Try again; existing jobs are preserved.',
@@ -66,7 +79,7 @@ async function rows<T>(client: SupabaseClient, table: string, limit = Infinity):
 }
 export async function loadDiscovery(client: SupabaseClient, limit = 100): Promise<Discovery> {
   const [connection, sources, runs, jobs, origins, reviews] = await Promise.all([
-    client.from('gmail_connections').select('status,expected_email,connected_email,checked_at,error_code').maybeSingle(),
+    client.from('gmail_connections').select('status,expected_email,connected_email,checked_at,error_code,granted_scopes,send_consented_at').maybeSingle(),
     rows<Source>(client, 'job_sources'),
     client.from('import_runs').select('*').order('started_at', { ascending: false }).limit(20),
     rows<Job>(client, 'imported_jobs', limit + 1), rows<Origin>(client, 'job_origins'), rows<Review>(client, 'job_reviews'),

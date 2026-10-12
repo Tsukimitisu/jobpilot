@@ -1,9 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { applicationAction } from './applications.ts'
 import { canonicalUrl, greenhouseCandidate, manualCandidate, parseAlert, plainText, validDate } from './discovery.ts'
-import { authorizationUrl, decryptToken, encryptToken, fetchJson, gmailGet, googleTokens, hash, messageText, randomSecret, ServiceError, verifyGmailIdentity, type GmailPart, type GoogleConfig } from './google.ts'
+import { authorizationUrl, decryptToken, encryptToken, fetchJson, gmailGet, gmailSendScope, googleTokens, hash, messageText, randomSecret, ServiceError, verifyGmailIdentity, type GmailPart, type GoogleConfig } from './google.ts'
 
 export type BackendConfig = { appOrigin: string; google: GoogleConfig }
-type Connection = { owner_id: string; expected_email: string; generation: string; status: string }
+type Connection = { owner_id: string; expected_email: string; generation: string; status: string; granted_scopes?: string[]; send_consented_at?: string | null }
 type Source = { id: string; owner_id: string; kind: string; source_key: string; name: string; cursor: string | null; enabled: boolean }
 export const safeCode = (error: unknown) => error instanceof ServiceError ? error.code : 'request_failed'
 function checked<T>(result: { data: T; error: unknown }): T {
@@ -20,14 +21,15 @@ async function markConnection(db: SupabaseClient, current: Connection, code: str
   checked(await db.from('gmail_connections').update({ status: code ? 'reconnect_required' : 'connected', error_code: code, checked_at: new Date().toISOString() })
     .eq('owner_id', current.owner_id).eq('generation', current.generation))
 }
-export async function gmailAccess(db: SupabaseClient, owner: string, config: GoogleConfig, transport: typeof fetch = fetch) {
+export async function gmailAccess(db: SupabaseClient, owner: string, config: GoogleConfig, transport: typeof fetch = fetch, send = false) {
   const current = await connection(db, owner)
   if (current.status === 'disconnected') throw new ServiceError('gmail_disconnected')
+  if (send && (!current.send_consented_at || !current.granted_scopes?.includes(gmailSendScope))) throw new ServiceError('send_consent_required')
   const credential = checked(await db.from('gmail_credentials').select('*').eq('owner_id', owner).eq('generation', current.generation).maybeSingle())
   if (!credential) { await markConnection(db, current, 'reconnect_required'); throw new ServiceError('reconnect_required') }
   try {
     const refresh = await decryptToken(credential.encrypted_refresh_token, owner, config.encryptionKey)
-    const tokens = await googleTokens(config, { grant_type: 'refresh_token', refresh_token: refresh }, transport)
+    const tokens = await googleTokens(config, { grant_type: 'refresh_token', refresh_token: refresh }, transport, send)
     await verifyGmailIdentity(tokens.accessToken, current.expected_email, transport)
     if (tokens.refreshToken) checked(await db.from('gmail_credentials').update({ encrypted_refresh_token: await encryptToken(tokens.refreshToken, owner, config.encryptionKey) }).eq('owner_id', owner).eq('generation', current.generation))
     await markConnection(db, current, null)
@@ -37,34 +39,30 @@ export async function gmailAccess(db: SupabaseClient, owner: string, config: Goo
     throw error
   }
 }
-export async function beginOAuth(db: SupabaseClient, owner: string, email: unknown, config: GoogleConfig) {
+export async function beginOAuth(db: SupabaseClient, owner: string, email: unknown, config: GoogleConfig, send = false) {
   if (typeof email !== 'string' || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) throw new ServiceError('invalid_email')
   if (!config.clientId || !config.clientSecret || !config.encryptionKey) throw new ServiceError('backend_configuration')
   await encryptToken('', owner, config.encryptionKey)
   const expected = email.trim().toLowerCase(), state = randomSecret(), verifier = randomSecret()
-  await rpc(db, 'begin_gmail_oauth', { p_owner: owner, p_email: expected, p_hash: await hash(state), p_verifier: verifier })
-  return { url: authorizationUrl(config, state, await hash(verifier), expected) }
+  await rpc(db, 'begin_gmail_oauth_v4', { p_owner: owner, p_email: expected, p_hash: await hash(state), p_verifier: verifier, p_send: send })
+  return { url: authorizationUrl(config, state, await hash(verifier), expected, send) }
 }
 export async function completeOAuth(db: SupabaseClient, url: URL, config: GoogleConfig, transport: typeof fetch = fetch) {
   const state = url.searchParams.get('state')
   if (!state || !/^[A-Za-z0-9_-]{43}$/.test(state)) throw new ServiceError('invalid_state')
-  const states = await rpc(db, 'consume_gmail_state', { p_hash: await hash(state) })
+  const states = await rpc(db, 'consume_gmail_state_v4', { p_hash: await hash(state) })
   const intent = states?.[0]
   if (!intent) throw new ServiceError('invalid_state')
-  try {
-    if (url.searchParams.has('error')) throw new ServiceError('consent_denied')
-    const code = url.searchParams.get('code')
-    if (!code || code.length > 4096) throw new ServiceError('token_failure')
-    const tokens = await googleTokens(config, { grant_type: 'authorization_code', code, code_verifier: intent.verifier, redirect_uri: config.redirectUri }, transport)
-    const email = await verifyGmailIdentity(tokens.accessToken, intent.expected_email, transport)
-    if (!tokens.refreshToken) throw new ServiceError('offline_access_missing')
-    const success = await rpc(db, 'finish_gmail_oauth', { p_owner: intent.owner_id, p_generation: intent.generation, p_email: email,
-      p_encrypted: await encryptToken(tokens.refreshToken, intent.owner_id, config.encryptionKey) })
-    if (!success) throw new ServiceError('invalid_state')
-  } catch (error) {
-    checked(await db.from('gmail_connections').update({ status: 'reconnect_required', error_code: safeCode(error) }).eq('owner_id', intent.owner_id).eq('generation', intent.generation))
-    throw error
-  }
+  // Failed/cancelled upgrades leave the active credential and connection intact.
+  if (url.searchParams.has('error')) throw new ServiceError('consent_denied')
+  const code = url.searchParams.get('code')
+  if (!code || code.length > 4096) throw new ServiceError('token_failure')
+  const tokens = await googleTokens(config, { grant_type: 'authorization_code', code, code_verifier: intent.verifier, redirect_uri: config.redirectUri }, transport, intent.requested_send === true)
+  const email = await verifyGmailIdentity(tokens.accessToken, intent.expected_email, transport)
+  if (!tokens.refreshToken) throw new ServiceError('offline_access_missing')
+  const success = await rpc(db, 'finish_gmail_oauth_v4', { p_owner: intent.owner_id, p_generation: intent.generation, p_email: email,
+    p_encrypted: await encryptToken(tokens.refreshToken, intent.owner_id, config.encryptionKey), p_scopes: tokens.scopes, p_send: intent.requested_send === true })
+  if (!success) throw new ServiceError('invalid_state')
 }
 async function labels(db: SupabaseClient, owner: string, config: GoogleConfig, transport: typeof fetch) {
   const current = await connection(db, owner)
@@ -141,9 +139,11 @@ export async function importSource(db: SupabaseClient, owner: string, sourceId: 
   }
 }
 export async function apiAction(db: SupabaseClient, owner: string, input: Record<string, unknown>, config: BackendConfig, transport: typeof fetch = fetch): Promise<unknown> {
+  if (typeof input.action === 'string' && input.action.startsWith('application_')) return applicationAction(db, owner, input, () => gmailAccess(db, owner, config.google, transport, true), transport)
   switch (input.action) {
     case 'connect': return beginOAuth(db, owner, input.email, config.google)
-    case 'disconnect': await rpc(db, 'disconnect_gmail', { p_owner: owner }); return { ok: true }
+    case 'connect_send': return beginOAuth(db, owner, input.email, config.google, true)
+    case 'disconnect': await rpc(db, 'disconnect_gmail_v4', { p_owner: owner }); return { ok: true }
     case 'check_gmail': await gmailAccess(db, owner, config.google, transport); return { ok: true }
     case 'labels': return { labels: await labels(db, owner, config.google, transport) }
     case 'save_gmail_label': {

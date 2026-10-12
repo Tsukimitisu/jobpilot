@@ -74,8 +74,12 @@ export async function deleteResume(client: SupabaseClient, resume: Resume): Prom
   } catch { throw new WorkspaceError('File deletion could not be confirmed. The metadata was kept. Refresh and retry deleting this entry.') }
   try {
     const metadata = await client.from('resumes').delete().eq('id', resume.id).select('id')
+    if (metadata.error?.code === '23503') throw new WorkspaceError('This resume is retained by an application. For an editable draft, select another resume or clear its selection and save before deleting. Sent application attachments are retained.')
     if (metadata.error || !metadata.data?.length) throw new Error()
-  } catch { throw new WorkspaceError('Storage returned without an error, but metadata deletion could not be confirmed. The file may already be gone. Refresh the list and retry deletion if the entry remains.') }
+  } catch (error) {
+    if (error instanceof WorkspaceError) throw error
+    throw new WorkspaceError('Storage returned without an error, but metadata deletion could not be confirmed. The file may already be gone. Refresh the list and retry deletion if the entry remains.')
+  }
 }
 export async function downloadResume(client: SupabaseClient, resume: Resume): Promise<Blob> {
   requireOnline()

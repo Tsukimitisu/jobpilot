@@ -165,7 +165,7 @@ describe('session lifecycle', () => {
     expect(screen.getByRole('heading', { name: 'Jobs' })).toBeTruthy()
     expect(screen.getByText('Owner access required')).toBeTruthy()
     fireEvent.click(screen.getAllByRole('link', { name: 'Applications' })[0])
-    expect(screen.getByText('No applications have been sent.')).toBeTruthy()
+    expect(screen.getByText('Owner access required')).toBeTruthy()
     fireEvent.click(screen.getAllByRole('link', { name: 'Settings' })[0])
     expect(screen.getByText('Owner access required')).toBeTruthy()
     expect(screen.getByText('Not implemented')).toBeTruthy()

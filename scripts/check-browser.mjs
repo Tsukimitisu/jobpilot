@@ -53,6 +53,9 @@ try {
   let mutationCount = 0
   let gmail = null
   let rejectGmail = false
+  let application = null
+  let sendCount = 0
+  let failApplicationSend = false
   const sources = [{ id: 'source-fixture', kind: 'gmail', source_key: 'Label_fixture', name: 'JobPilot/Alerts', enabled: true, cursor: null, last_success_at: '2026-01-01T00:00:00Z' }]
   const jobs = [{ id: 'job-fixture', owner_id: owner, title: 'Frontend Engineer', company: 'Fixture Company', location: null, work_mode: null, canonical_url: 'https://example.invalid/jobs/42', description: 'Inert browser fixture. No real mailbox content.', requirements: ['React', 'TypeScript'], uncertainty: ['Location and work mode unknown. Verify the source.'], published_at: null, created_at: '2026-01-01T00:00:00Z' }]
   const reviews = [{ job_id: 'job-fixture', owner_id: owner, disposition: 'new', reviewed: false }]
@@ -74,6 +77,7 @@ try {
     else if (url.pathname === '/rest/v1/job_sources') body = sources
     else if (url.pathname === '/rest/v1/imported_jobs') body = jobs
     else if (url.pathname === '/rest/v1/import_runs') body = []
+    else if (url.pathname === '/rest/v1/applications') body = application ? [application] : []
     else if (url.pathname === '/rest/v1/job_origins') body = [{ id: 'origin-fixture', job_id: 'job-fixture', source_id: 'source-fixture', message_id: 'message-fixture', sender: 'alerts@example.invalid', source_date: '2026-01-01T00:00:00Z', source_url: 'https://mail.google.com/mail/u/0/#all/message-fixture' }]
     else if (url.pathname === '/rest/v1/job_reviews') {
       if (request.method === 'PATCH') Object.assign(reviews[0], JSON.parse(request.postData))
@@ -83,6 +87,19 @@ try {
       if (input.action === 'labels') body = { labels: [{ id: 'Label_fixture', name: 'JobPilot/Alerts' }] }
       else if (input.action === 'check_gmail' && rejectGmail) { gmail.status = 'reconnect_required'; gmail.error_code = 'reconnect_required'; status = 400; body = { error: 'reconnect_required' } }
       else if (input.action === 'disconnect') { gmail = { expected_email: user.email, status: 'disconnected' }; body = { ok: true } }
+      else if (input.action === 'application_create') {
+        application ??= { id: 'application-fixture', owner_id: owner, job_id: 'job-fixture', recipient: '', recipient_verified: false, subject: 'Application: Frontend Engineer', body: 'Hello,\n\nPlease review my attached resume for this position.\n\nThank you,\nBrowser Test Owner', resume_id: null, status: 'draft', revision: 1, created_at: '2026-01-01', updated_at: '2026-01-01' }
+        body = application
+      } else if (input.action?.startsWith('application_')) {
+        if (input.action === 'application_send' && failApplicationSend) { status = 500; body = {error:'request_failed'} }
+        else {
+        if (input.action === 'application_save') Object.assign(application, input, { status: 'draft' })
+        if (input.action === 'application_ready') Object.assign(application, { status: 'ready', sender_email: user.email, resume_name: resumes[0].original_name, resume_bytes: resumes[0].byte_size, resume_sha256: 'fixture-checksum' })
+        if (input.action === 'application_send') { assert.equal(input.confirmed, true); sendCount++; Object.assign(application, { status: 'sent', gmail_message_id: 'inert-browser-message', sent_at: '2026-01-01' }) }
+        if (input.action !== 'application_refresh') application.revision++
+        body = application
+        }
+      }
       else body = { ok: true, added: 0, duplicates: 1, more: false }
     } else if (url.pathname === '/rest/v1/resumes') body = resumes
     else if (url.pathname === '/rest/v1/resume_defaults') body = defaultId ? [{ resume_id: defaultId }] : []
@@ -166,6 +183,50 @@ try {
   }
   await clickText('Save job')
   await waitFor(`!![...document.querySelectorAll('button')].find(e => e.textContent === 'Unsave job')`)
+  gmail.send_consented_at = '2026-01-01'; gmail.granted_scopes = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send']
+  await clickText('Create application draft')
+  await waitFor(`!!document.querySelector('#application-recipient')`)
+  assert.equal(await evaluate(`document.querySelector('#application-recipient').value`), '', 'alert sender must never fill employer recipient')
+  await fill('application-recipient', 'employer@example.invalid')
+  await evaluate(`document.querySelector('.choice-list input').click()`)
+  await evaluate(`(() => { const select = document.querySelector('#application-resume'); select.value = ${JSON.stringify(resumes[0].id)}; select.dispatchEvent(new Event('change', {bubbles:true})); })()`)
+  await clickText('Save draft')
+  await waitFor(`!![...document.querySelectorAll('button')].find(b => b.textContent === 'Review final email' && !b.disabled)`)
+  for (const surface of ['application-editor', 'application-review']) {
+    if (surface === 'application-review') { await clickText('Review final email'); await waitFor(`!!document.querySelector('#final-email-heading')`) }
+    for (const [width,height] of [[360,800],[375,812],[390,844],[768,1024],[1024,768],[1440,1000],[932,360]]) {
+      await send('Emulation.setDeviceMetricsOverride', {width,height,deviceScaleFactor:1,mobile:width<900})
+      await send('Emulation.setTouchEmulationEnabled', {enabled:width<900})
+      await pause(100)
+      assert.ok(await evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), `${surface} overflow at ${width}`)
+      assert.ok(await evaluate(`[...document.querySelectorAll('button,summary,input,select,textarea')].filter(e => e.getClientRects().length).every(e => (e.type === 'checkbox' ? e.closest('label') : e).getBoundingClientRect().height >= 44)`), `${surface} touch target at ${width}`)
+      if (width===390 || width===1440) { const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});await writeFile(`artifacts/${surface}-${width}.png`,Buffer.from(shot.data,'base64')) }
+    }
+  }
+  assert.ok(await evaluate(`[...document.querySelectorAll('button')].find(b=>b.textContent==='Confirm and send email').disabled`),'final send requires confirmation')
+  await send('Emulation.setDeviceMetricsOverride',{width:360,height:800,deviceScaleFactor:1,mobile:true})
+  failApplicationSend = true
+  await evaluate(`document.querySelector('.choice-list input').click()`)
+  await clickText('Confirm and send email')
+  await waitFor(`document.body.textContent.includes('Sending is locked until Refresh status')`)
+  assert.ok(await evaluate(`document.querySelector('.choice-list input').disabled`),'uncertain send locks confirmation')
+  failApplicationSend = false
+  await clickText('Refresh status')
+  await waitFor(`!document.querySelector('.choice-list input').disabled`)
+  assert.ok(await evaluate(`!document.querySelector('.choice-list input').checked`),'status refresh still requires new confirmation')
+  await evaluate(`document.querySelector('.choice-list input').click()`)
+  await evaluate(`(() => { const b=[...document.querySelectorAll('button')].find(b=>b.textContent==='Confirm and send email'); b.click(); b.click(); })()`)
+  await waitFor(`document.body.textContent.includes('Gmail accepted this email')`)
+  assert.equal(sendCount,1,'duplicate taps send one mocked request')
+  for (const state of ['sending','delivery_unknown','failed','external']) {
+    application.status=state;application.attempt_id='inert-attempt';application.sending_at='2026-01-01';application.external_sent_at='2026-01-01'
+    await clickText('Refresh status')
+    await waitFor(`document.querySelector('.application-editor .badge')?.textContent === ${JSON.stringify({sending:'Sending',delivery_unknown:'Delivery unknown',failed:'Failed',external:'Sent outside JobPilot'}[state])}`)
+    assert.ok(await evaluate(`![...document.querySelectorAll('button')].some(b=>b.textContent==='Confirm and send email')`),`${state} cannot send directly`)
+    assert.ok(await evaluate('document.documentElement.scrollWidth <= innerWidth + 1'),`${state} overflow`)
+  }
+  await evaluate(`document.querySelector('a[href="/jobs"]').click()`)
+  await waitFor(`!![...document.querySelectorAll('button')].find(e => e.textContent === 'Dismiss job')`)
   await clickText('Dismiss job')
   await waitFor(`document.body.textContent.includes('No jobs match these filters.')`)
   await evaluate(`document.querySelector('a[href="/settings"]').click()`)
@@ -182,7 +243,7 @@ try {
   const storageKeys = await evaluate('Object.keys(localStorage)')
   assert.ok(storageKeys.every(key => key.startsWith('sb-') && key.endsWith('-auth-token')), 'non-session browser persistence found')
   assert.deepEqual(consoleErrors, [])
-  console.log(`Real headless Edge PASS with mocked Supabase: login, profile save/reload, offline draft preservation, job save/dismiss, label confirmation, connected/reconnect/disconnected states, layouts at 360/375/390/768/1024/1440 and landscape, ${caches.length} public cache entries, session-only localStorage. Screenshots: artifacts/. No phone installation or live Gmail/hosted checks.`)
+  console.log(`Real headless Edge PASS with mocked Supabase: login, profile save/reload, offline drafts, job save/dismiss, label confirmation, Gmail states, application draft/review/explicit confirmation/duplicate taps/statuses, layouts at 360/375/390/768/1024/1440 and landscape, ${caches.length} public cache entries, session-only localStorage. Screenshots: artifacts/. No phone installation or live Gmail/hosted checks.`)
   await send('Browser.close').catch(() => {})
 } finally {
   socket?.close()

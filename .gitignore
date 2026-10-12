@@ -30,3 +30,4 @@ supabase/.temp/
 supabase/.branches/
 .browser-check/
 artifacts/
+supabase/functions/phase4-fixture/

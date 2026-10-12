@@ -8,7 +8,7 @@ function backend() {
   const intent = { owner_id: 'owner', generation: 'generation', expected_email: 'owner@example.invalid', verifier: 'fixture-verifier' }
   let consumed = false
   const rpc = vi.fn(async (name: string) => {
-    if (name === 'consume_gmail_state') { const data = consumed ? [] : [intent]; consumed = true; return { data, error: null } }
+    if (name === 'consume_gmail_state_v4') { const data = consumed ? [] : [intent]; consumed = true; return { data, error: null } }
     return { data: true, error: null }
   })
   const eq = vi.fn(() => ({ eq: async () => ({ error: null }) }))
@@ -25,8 +25,8 @@ describe('Edge handler fixture tests', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ emailAddress: 'owner@example.invalid' })))
     const url = new URL(`${config.google.redirectUri}?state=${state}&code=inert-code`)
     await completeOAuth(api.db, url, config.google, transport)
-    expect(api.rpc).toHaveBeenNthCalledWith(1, 'consume_gmail_state', { p_hash: await hash(state) })
-    expect(api.rpc).toHaveBeenCalledWith('finish_gmail_oauth', expect.objectContaining({ p_owner: 'owner', p_email: 'owner@example.invalid', p_encrypted: expect.stringMatching(/^v1\./) }))
+    expect(api.rpc).toHaveBeenNthCalledWith(1, 'consume_gmail_state_v4', { p_hash: await hash(state) })
+    expect(api.rpc).toHaveBeenCalledWith('finish_gmail_oauth_v4', expect.objectContaining({ p_owner: 'owner', p_email: 'owner@example.invalid', p_encrypted: expect.stringMatching(/^v1\./) }))
     await expect(completeOAuth(api.db, url, config.google, transport)).rejects.toThrow('invalid_state')
     expect(transport).toHaveBeenCalledTimes(2)
   })
@@ -41,7 +41,7 @@ describe('Edge handler fixture tests', () => {
     const transport = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'inert', refresh_token: 'inert-refresh', expires_in: 3600, scope: gmailScope })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ emailAddress: 'wrong@example.invalid' })))
     await expect(completeOAuth(api.db, new URL(`${config.google.redirectUri}?state=${randomSecret()}&code=inert`), config.google, transport)).rejects.toThrow('wrong_account')
-    expect(api.rpc).not.toHaveBeenCalledWith('finish_gmail_oauth', expect.anything())
+    expect(api.rpc).not.toHaveBeenCalledWith('finish_gmail_oauth_v4', expect.anything())
   })
   it('consumes denied consent and returns only a safe result to the fixed app origin', async () => {
     const api = backend()

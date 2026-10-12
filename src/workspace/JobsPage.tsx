@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { applicationAction } from '../lib/applications'
 import { canonicalUrl, duplicateSuggestions, matchJob } from '../../supabase/functions/_shared/discovery'
 import { discoveryAction, displayDate, saveReview, type Job, type Review } from '../lib/discovery'
 import { OwnerContent } from './WorkspaceContext'
@@ -12,6 +13,7 @@ export function JobsPage() {
   return <><header className="page-heading"><h1>Jobs</h1><p>Discover opportunities, understand the fit, and decide what to keep.</p></header><OwnerContent><JobsContent /></OwnerContent></>
 }
 function JobsContent() {
+  const navigate = useNavigate()
   const { client, ownerId, data: workspace } = useWorkspace()
   const { data, online, busy, loading, refresh, run, loadMore } = useDiscovery()
   const [entry, setEntry] = useState(emptyEntry)
@@ -96,7 +98,13 @@ function JobsContent() {
           const sourceUrl = canonicalUrl(origin.source_url)
           return <li key={origin.id}><strong>{data?.sources.find(source => source.id === origin.source_id)?.name ?? 'Source unavailable'}</strong><p>{origin.sender ? `Sender: ${origin.sender} · ` : ''}Source date: {origin.source_date ? displayDate(origin.source_date) : 'unknown'}</p>{origin.message_id && <p>Message ID: {origin.message_id}</p>}{sourceUrl && <a className="text-link" href={origin.source_url!} target="_blank" rel="noopener noreferrer">Open source</a>}</li>
         })}</ul></details>
-        <div className="action-row"><button className="button button-secondary" disabled={disabled} onClick={() => void reviewJob(job, state === 'saved' ? 'new' : 'saved', review?.reviewed ?? false)}>{state === 'saved' ? 'Unsave job' : 'Save job'}</button><button className="button button-secondary" disabled={disabled} onClick={() => void reviewJob(job, state === 'dismissed' ? 'new' : 'dismissed', review?.reviewed ?? false)}>{state === 'dismissed' ? 'Restore job' : 'Dismiss job'}</button></div>
+        <div className="action-row"><button className="button button-secondary" disabled={disabled} onClick={() => void reviewJob(job, state === 'saved' ? 'new' : 'saved', review?.reviewed ?? false)}>{state === 'saved' ? 'Unsave job' : 'Save job'}</button><button className="button button-secondary" disabled={disabled} onClick={() => void reviewJob(job, state === 'dismissed' ? 'new' : 'dismissed', review?.reviewed ?? false)}>{state === 'dismissed' ? 'Restore job' : 'Dismiss job'}</button>
+          {(state === 'saved' || review?.reviewed) && state !== 'dismissed' && <button className="button" disabled={disabled} onClick={() => void run(async () => {
+            const application = await applicationAction(client,{ action: 'application_create', jobId: job.id })
+            navigate(`/applications?application=${application.id}`)
+            return 'Application draft opened. Enter and verify the employer recipient.'
+          })}>Create application draft</button>}
+        </div>
       </article>
     })}</div>
     {data?.more && <button className="button button-secondary" disabled={loading || busy || !online} onClick={loadMore}>Load 100 more jobs</button>}

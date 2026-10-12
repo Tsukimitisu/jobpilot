@@ -109,3 +109,38 @@ Headless Edge with synthetic, mocked provider data checks Jobs and Settings at
 states, label confirmation, job save/dismiss, and public-only cache contents.
 390px and 1440px screenshots were inspected. These checks do not establish live
 Gmail consent, actual phone installation/handoff, Safari, or screen-reader output.
+
+## Phase 4 extension and verification
+
+Applications and the Gmail sending controls extend the existing restrained green,
+light workspace with plain CSS and the same system font. The application editor
+uses a white bordered panel with 24px padding, visible field labels, 50px inputs,
+48px actions and checkbox labels, and wrapping action rows. Its single-column form
+retains the existing mobile navigation and safe-area spacing at 360px widths.
+
+Final review uses labeled From, To, Subject, and Attachment values. These share the
+job-fit definition-list layout: one column on phones, two columns from 640px. The
+attachment includes the selected PDF name and byte size; supporting text displays
+the send filename. Email text preserves line breaks and wraps long content. Review
+receives keyboard focus when the draft becomes ready. The confirmation checkbox
+and explicit send button follow the full email; the secondary edit action lets the
+owner return to the form. Sending controls become unavailable while busy or offline.
+After other saved transitions, the application heading receives focus with its
+status description. An uncertain send request locks confirmation across closing
+and reopening the editor until an authoritative status refresh succeeds.
+
+Status badges and notices use text alongside the existing colors. Gmail settings
+distinguishes saved sending consent from the last access check. Delivery-unknown
+records expose Gmail reconciliation instructions and a labeled note field, with
+separate actions for a found email and an inconclusive check. External application
+tracking stays under a disclosure with date and note fields. These records make
+their manual provenance clear and do not imply that JobPilot sent the application.
+
+Headless Edge checks with mocked Supabase data passed at 360/375/390/768/1024/1440px
+and 932×360 landscape. Editor and review captures are stored as
+`artifacts/application-editor-390.png`, `artifacts/application-editor-1440.png`,
+`artifacts/application-review-390.png`, and `artifacts/application-review-1440.png`.
+These are local browser checks, not live Gmail consent, hosted verification,
+actual phone installation, Safari, or screen-reader verification. The mechanical
+detector reported existing palette-documentation advisories. PHASE4.md records
+the final verification results and remaining manual checks.
