@@ -37,7 +37,7 @@ export function authorizationUrl(config: GoogleConfig, state: string, challenge:
 export async function fetchJson(url: string, init: RequestInit = {}, transport: typeof fetch = fetch): Promise<Record<string, unknown>> {
   let response: Response
   try { response = await transport(url, { ...init, redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(10000) }) }
-  catch { throw new ServiceError('provider_unavailable') }
+  catch (error) { if (error instanceof ServiceError) throw error; throw new ServiceError('provider_unavailable') }
   const declared = Number(response.headers.get('content-length') ?? 0)
   if (declared > 8_000_000) throw new ServiceError('response_too_large')
   const reader = response.body?.getReader()

@@ -168,7 +168,7 @@ describe('session lifecycle', () => {
     expect(screen.getByText('Owner access required')).toBeTruthy()
     fireEvent.click(screen.getAllByRole('link', { name: 'Settings' })[0])
     expect(screen.getByText('Owner access required')).toBeTruthy()
-    expect(screen.getByText('Not implemented')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Automation settings' })).toBeTruthy()
     expect(document.activeElement?.id).toBe('main-content')
   })
 })

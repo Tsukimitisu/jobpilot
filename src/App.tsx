@@ -15,6 +15,7 @@ import { useDiscovery } from './workspace/useDiscovery'
 import { JobsPage } from './workspace/JobsPage'
 import { SourceSettings } from './workspace/SourceSettings'
 import { ApplicationsPage } from './workspace/ApplicationsPage'
+import { AutomationPage, ImportHistory } from './workspace/AutomationPage'
 import { gmailStatus } from './lib/discovery'
 import './App.css'
 
@@ -103,7 +104,7 @@ function Shell({ session }: { session: Session }) {
   const { pathname } = useLocation()
   const mainRef = useRef<HTMLElement>(null)
   useEffect(() => {
-    document.title = `${navigation.find(item => item.to === pathname)?.label ?? (pathname === '/profile' ? 'Profile' : pathname === '/resumes' ? 'Resumes' : 'Page not found')} · JobPilot`
+    document.title = `${navigation.find(item => item.to === pathname)?.label ?? (pathname === '/profile' ? 'Profile' : pathname === '/resumes' ? 'Resumes' : pathname === '/settings/automation' ? 'Automation' : 'Page not found')} · JobPilot`
     mainRef.current?.focus()
     window.scrollTo(0, 0)
   }, [pathname])
@@ -126,7 +127,6 @@ function PageHeading({ title, children }: { title: string; children: ReactNode }
 const checklist = [
   { title: 'Account sign-in', detail: 'Your Supabase account is signed in.', status: 'Ready', ready: true },
   { title: 'Personal workspace', detail: 'Dashboard, jobs, applications, and settings are in place.', status: 'Ready', ready: true },
-  { title: 'Scheduled automation', detail: 'No scheduled workers or background runs exist yet.', status: 'Not implemented', ready: false },
 ]
 
 function Dashboard({ session }: { session: Session }) {
@@ -138,13 +138,22 @@ function Dashboard({ session }: { session: Session }) {
   const persisted = [
     { title: 'Owner profile', detail: data?.profile ? 'A profile is saved. Review details and preferences in Profile.' : 'Add your contact details, experience, and preferences in Profile.', status: unknown ?? (data?.profile ? 'Saved' : 'Not saved'), ready: !unknown && !!data?.profile },
     { title: 'Private resume', detail: 'Upload a private PDF and choose a default in Resumes.', status: unknown ?? (data?.defaultId ? 'Default selected' : data?.resumes.some(item => item.status === 'ready') ? 'Choose a default' : 'No ready resume'), ready: !unknown && !!data?.defaultId },
-    { title: 'Job sources', detail: 'Manage Gmail labels and Greenhouse boards in Settings. Import on demand from Jobs.', status: discoveryUnknown ?? `${sourceCount} enabled`, ready: !discoveryUnknown && sourceCount > 0 },
+    { title: 'Job sources', detail: 'Manage Gmail labels and Greenhouse boards in Settings. Scheduled discovery is controlled in Automation.', status: discoveryUnknown ?? `${sourceCount} enabled`, ready: !discoveryUnknown && sourceCount > 0 },
+    { title: 'Scheduled discovery', detail: 'Hourly checks in Philippine time. Enable or pause in Automation settings.', status: discoveryUnknown ?? (discovery.data?.automation?.enabled ? 'Enabled' : 'Off'), ready: !discoveryUnknown && discovery.data?.automation?.enabled === true },
     { title: 'Gmail connection', detail: 'Imports use your chosen label. Sending requires separate consent and confirmation. Check access in Settings.', status: discoveryUnknown ?? gmailStatus(discovery.data?.connection ?? null), ready: !discoveryUnknown && discovery.data?.connection?.status === 'connected' },
   ]
   return <><PageHeading title="Welcome to your workspace.">A little structure for your next career move.</PageHeading>
     <div className="welcome-note"><span className="status-dot" aria-hidden="true" /><p>Signed in as <strong className="wrap-anywhere">{session.user.email ?? 'your Supabase account'}</strong></p></div>
     {error && <p className="error-message" role="alert">{error}</p>}
-    <section className="panel" aria-labelledby="setup-heading"><div className="section-heading"><div><h2 id="setup-heading">Your setup checklist</h2><p>Status reflects your saved workspace data.</p></div><span className="badge">Phase 4</span></div>
+    {data?.owner && <section className="panel settings-section" aria-labelledby="recent-jobs"><h2 id="recent-jobs">Latest imported jobs</h2>
+      {discovery.error && <p className="error-message" role="alert">{discovery.error} Previously loaded data may be out of date.</p>}
+      <p className="fine-print">Updates automatically while this app is open and online.</p>
+      <ul className="source-list">{discovery.data?.jobs.slice(0, 5).map(job => <li key={job.id}><h3>{job.title ?? 'Job details need review'}</h3><p>{job.company ?? 'Company not provided'}</p></li>)}</ul>
+      {discovery.data?.jobs.length === 0 && <p>No imported jobs yet. Enable discovery after confirming your sources.</p>}
+      <div className="action-row"><Link className="text-link" to="/jobs">Review imported jobs</Link><Link className="text-link" to="/settings/automation">Automation settings</Link></div>
+      <ImportHistory runs={discovery.data?.runs.slice(0, 5) ?? []} />
+    </section>}
+    <section className="panel" aria-labelledby="setup-heading"><div className="section-heading"><div><h2 id="setup-heading">Your setup checklist</h2><p>Status reflects your saved workspace data.</p></div><span className="badge">Phase 5</span></div>
       <ul className="checklist">{[...checklist.slice(0, 2), ...persisted, ...checklist.slice(2)].map(item => <li key={item.title}>
         <span className={item.ready ? 'check-icon ready' : 'check-icon'}>{item.ready ? <Check size={19} aria-hidden="true" /> : <Circle size={19} aria-hidden="true" />}</span>
         <div className="check-copy"><h3>{item.title}</h3><p>{item.detail}</p></div><span className={item.ready ? 'badge badge-ready' : 'badge'}>{item.status}</span>
@@ -168,6 +177,7 @@ function SettingsPage({ session, client }: { session: Session; client: SupabaseC
     finally { setBusy(false) }
   }
   return <><PageHeading title="Settings">Your account and workspace connections.</PageHeading>
+    <section className="panel settings-section"><h2>Scheduled discovery</h2><p>Choose when automatic job discovery is enabled. Your applications still require your review and explicit send action.</p><Link className="text-link" to="/settings/automation">Automation settings</Link></section>
     <SourceSettings />
     <section className="panel settings-section"><h2>Your application details</h2><p>Manage your saved background and private PDFs. {dirty ? 'Your profile has unsaved changes.' : ''}</p><div className="action-row"><Link className="text-link" to="/profile">Profile</Link><Link className="text-link" to="/resumes">Resumes</Link></div></section>
     <section className="panel settings-section"><h2>Install on your phone</h2><p><strong>Android:</strong> Open your deployed HTTPS site in Chrome. Open the browser menu, then choose “Install app” or “Add to Home screen”.</p><p><strong>iPhone:</strong> Open the site in Safari. Tap Share, then “Add to Home Screen” and Add. Enable “Open as Web App” if offered.</p><p className="fine-print">Installation availability depends on your browser. Sign in on each device. Only the public app shell works offline; private data needs a connection. Installation does not enable background job automation.</p></section>
@@ -175,9 +185,7 @@ function SettingsPage({ session, client }: { session: Session; client: SupabaseC
       <button className="button button-secondary" onClick={signOut} disabled={busy}><LogOut size={18} aria-hidden="true" />{busy ? 'Signing out…' : 'Sign out'}</button>
       <p className="fine-print">Signs out of this browser session.</p>{error && <p className="error-message" role="alert">{error}</p>}
     </section>
-    <section className="panel settings-section" aria-labelledby="connections-heading"><h2 id="connections-heading">Connections & automation</h2>
-      <div className="setting-row"><Circle size={22} aria-hidden="true" /><div><h3>Automation</h3><p>No scheduled tasks run in the background.</p></div><span className="badge">Not implemented</span></div>
-    </section></>
+    </>
 }
 
 function NotFound({ signedIn }: { signedIn: boolean }) {
@@ -207,6 +215,7 @@ function AuthenticatedApp({ client }: { client: SupabaseClient }) {
       <Route path="/dashboard" element={auth.session && <Dashboard session={auth.session} />} />
       <Route path="/jobs" element={<JobsPage />} />
       <Route path="/applications" element={<ApplicationsPage />} />
+      <Route path="/settings/automation" element={<AutomationPage />} />
       <Route path="/settings" element={auth.session && <SettingsPage key={auth.session.user.id} session={auth.session} client={client} />} />
     </Route>
     <Route path="*" element={<NotFound signedIn={!!auth.session} />} />

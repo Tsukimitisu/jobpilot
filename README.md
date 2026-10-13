@@ -1,4 +1,4 @@
-# JobPilot — Phase 4
+# JobPilot — Phase 5
 
 Personal, single-owner job-search workspace using React, TypeScript, Vite,
 Supabase Auth/Postgres/private Storage, Vercel, and vite-plugin-pwa.
@@ -7,8 +7,15 @@ owner, a persistent profile, private PDF resumes, and an installable app shell.
 Phase 3 adds Gmail label-scoped and Greenhouse imports, manual jobs, explainable
 matching, and saved/dismissed/review state. Phase 4 adds application drafts,
 explicitly confirmed Gmail sending, delivery-unknown reconciliation, and manual
-tracking for applications sent elsewhere. AI, website submission, automatic
-sending, background sync, scheduled workers, and follow-ups remain unavailable.
+tracking for applications sent elsewhere. Phase 5 adds owner-controlled hourly
+discovery through Supabase Cron, OFF by default, with Philippine-time status and
+automatic dashboard refresh. AI, website submission, automatic sending, offline
+background sync, and follow-ups remain unavailable.
+
+**For an existing Phase 4 installation, follow [the Phase 5 rollout guide](PHASE5.md).**
+It covers the additive migration, dedicated scheduler secret, Vault, administrator-run
+Cron creation, monitoring, pause, non-destructive rollback, and hosted acceptance.
+No hosted rollout, Cron creation, or real email was performed during implementation.
 
 **For an existing Phase 3 installation, follow [the Phase 4 rollout guide](PHASE4.md).**
 It documents the data-preserving migration, Google Data Access change, both Edge

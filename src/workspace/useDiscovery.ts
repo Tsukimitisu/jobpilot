@@ -16,10 +16,11 @@ export function useDiscoveryState() {
   const [checkedAt, setCheckedAt] = useState(0)
   const working = useRef(false)
   const lifecycle = useRef({ active: false, revision: 0 })
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (preserveNotice = false) => {
     if (!owner) return false
     const state = lifecycle.current, revision = ++state.revision
     setLoading(true); setError(null)
+    if (!preserveNotice) setNotice(null)
     try {
       const value = await loadDiscovery(client, limit)
       if (!state.active || revision !== state.revision) return false
@@ -38,13 +39,21 @@ export function useDiscoveryState() {
     void Promise.resolve().then(() => { if (!cancelled) void refresh() })
     return () => { cancelled = true; state.active = false; state.revision++ }
   }, [refresh])
+  useEffect(() => {
+    if (!owner || !online) return
+    const update = () => { if (document.visibilityState === 'visible' && !working.current) void refresh() }
+    const interval = window.setInterval(update, 30000)
+    window.addEventListener('focus', update)
+    document.addEventListener('visibilitychange', update)
+    return () => { window.clearInterval(interval); window.removeEventListener('focus', update); document.removeEventListener('visibilitychange', update) }
+  }, [owner, online, refresh])
   async function run(work: () => Promise<string>) {
     if (working.current || !online) return false
     working.current = true; setBusy(true); setNotice(null); setActionError(null)
     let success = false
     try { const message = await work(); if (lifecycle.current.active) setNotice(message); success = true }
     catch (reason) { if (lifecycle.current.active) setActionError(workspaceMessage(reason)) }
-    finally { await refresh(); working.current = false; if (lifecycle.current.active) setBusy(false) }
+    finally { await refresh(true); working.current = false; if (lifecycle.current.active) setBusy(false) }
     return success
   }
   return { data, error, loading, refresh, online, busy, notice, actionError, checkedAt, run, loadMore: () => setLimit(value => value + 100) }

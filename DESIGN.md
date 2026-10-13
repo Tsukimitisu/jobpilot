@@ -144,3 +144,28 @@ These are local browser checks, not live Gmail consent, hosted verification,
 actual phone installation, Safari, or screen-reader verification. The mechanical
 detector reported existing palette-documentation advisories. PHASE4.md records
 the final verification results and remaining manual checks.
+
+## Phase 5 extension and verification
+
+Automation extends the existing light, green, plain-CSS settings interface without
+changing fonts, colors, navigation, or breakpoints. It is reached from Settings
+and the dashboard. A labeled status accompanies the explicit Enable/Pause action;
+last and next expected runs use Philippine time. Source rows retain wrapping names,
+text status, import counts, and actionable Gmail reconnect guidance. Schedule
+metadata uses the existing definition-list layout: one column on phones and two
+from 640px. Buttons retain 48px minimum height and visible keyboard focus.
+
+The dashboard adds recent jobs and import history using existing panels and source
+lists. Refreshes preserve the page and application editor; private data refreshes
+while visible and online or when returning to the app. Immediate action notices
+are cleared by later status refreshes so an old paused confirmation cannot
+contradict newly loaded enabled state. Offline mutations remain disabled.
+
+Headless Edge with mocked Supabase passed at 360/375/390/768/1024/1440px and 932×360
+landscape, including touch targets, enable/pause, PHT, overdue/reconnect states,
+automatic dashboard refresh, Phase 4 interactions, and public-only caches.
+Screenshots `artifacts/automation-390.png`, `artifacts/automation-1440.png`, and
+`artifacts/automation-error-390.png` were inspected. The changed-TSX detector had no
+findings. Independent finish review: ship, after resolving and recapturing the
+stale-notice issue. These checks do not establish actual phone installation,
+Safari, screen-reader behavior, live Gmail, or hosted scheduler operation.

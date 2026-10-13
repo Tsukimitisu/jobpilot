@@ -56,6 +56,9 @@ try {
   let application = null
   let sendCount = 0
   let failApplicationSend = false
+  let automation = null
+  let automationRuns = []
+  let importRuns = []
   const sources = [{ id: 'source-fixture', kind: 'gmail', source_key: 'Label_fixture', name: 'JobPilot/Alerts', enabled: true, cursor: null, last_success_at: '2026-01-01T00:00:00Z' }]
   const jobs = [{ id: 'job-fixture', owner_id: owner, title: 'Frontend Engineer', company: 'Fixture Company', location: null, work_mode: null, canonical_url: 'https://example.invalid/jobs/42', description: 'Inert browser fixture. No real mailbox content.', requirements: ['React', 'TypeScript'], uncertainty: ['Location and work mode unknown. Verify the source.'], published_at: null, created_at: '2026-01-01T00:00:00Z' }]
   const reviews = [{ job_id: 'job-fixture', owner_id: owner, disposition: 'new', reviewed: false }]
@@ -76,7 +79,10 @@ try {
     } else if (url.pathname === '/rest/v1/gmail_connections') body = gmail ? [gmail] : []
     else if (url.pathname === '/rest/v1/job_sources') body = sources
     else if (url.pathname === '/rest/v1/imported_jobs') body = jobs
-    else if (url.pathname === '/rest/v1/import_runs') body = []
+    else if (url.pathname === '/rest/v1/import_runs') body = importRuns
+    else if (url.pathname === '/rest/v1/latest_scheduled_imports') body = importRuns
+    else if (url.pathname === '/rest/v1/discovery_automation') body = automation ? [automation] : []
+    else if (url.pathname === '/rest/v1/automation_runs') body = automationRuns
     else if (url.pathname === '/rest/v1/applications') body = application ? [application] : []
     else if (url.pathname === '/rest/v1/job_origins') body = [{ id: 'origin-fixture', job_id: 'job-fixture', source_id: 'source-fixture', message_id: 'message-fixture', sender: 'alerts@example.invalid', source_date: '2026-01-01T00:00:00Z', source_url: 'https://mail.google.com/mail/u/0/#all/message-fixture' }]
     else if (url.pathname === '/rest/v1/job_reviews') {
@@ -85,6 +91,7 @@ try {
     } else if (url.pathname === '/functions/v1/jobpilot-api') {
       const input = JSON.parse(request.postData)
       if (input.action === 'labels') body = { labels: [{ id: 'Label_fixture', name: 'JobPilot/Alerts' }] }
+      else if (input.action === 'set_automation') { automation = { enabled: input.enabled, next_run_at: input.enabled ? new Date((Math.floor(Date.now() / 3600000) + 1) * 3600000).toISOString() : null }; body = { ok: true } }
       else if (input.action === 'check_gmail' && rejectGmail) { gmail.status = 'reconnect_required'; gmail.error_code = 'reconnect_required'; status = 400; body = { error: 'reconnect_required' } }
       else if (input.action === 'disconnect') { gmail = { expected_email: user.email, status: 'disconnected' }; body = { ok: true } }
       else if (input.action === 'application_create') {
@@ -169,6 +176,40 @@ try {
   await waitFor(`!!document.querySelector('#gmail-label')`)
   await clickText('Confirm label')
   await waitFor(`document.body.textContent.includes('Gmail import label confirmed.')`)
+  await evaluate(`document.querySelector('a[href="/settings/automation"]').click()`)
+  await waitFor(`!![...document.querySelectorAll('button')].find(b => b.textContent === 'Enable automation' && !b.disabled)`)
+  assert.ok(await evaluate(`document.body.textContent.includes('None while off')`), 'automation defaults off')
+  await clickText('Enable automation')
+  await waitFor(`!![...document.querySelectorAll('button')].find(b => b.textContent === 'Pause automation' && !b.disabled)`)
+  assert.ok(await evaluate(`document.body.textContent.includes('PHT')`), 'schedule uses Philippine time')
+  for (const [width,height] of [[360,800],[375,812],[390,844],[768,1024],[1024,768],[1440,1000],[932,360]]) {
+    await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<900})
+    await pause(100)
+    assert.ok(await evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), `automation overflow at ${width}`)
+    assert.ok(await evaluate(`[...document.querySelectorAll('button,a')].filter(e=>e.getClientRects().length).every(e=>e.getBoundingClientRect().height>=44)`), `automation touch target at ${width}`)
+    if (width===390 || width===1440) { const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:true}); await writeFile(`artifacts/automation-${width}.png`,Buffer.from(shot.data,'base64')) }
+  }
+  await clickText('Pause automation')
+  await waitFor(`document.body.textContent.includes('None while off')`)
+  gmail.status = 'reconnect_required'
+  automation = { enabled: true, next_run_at: '2020-01-01T00:00:00Z' }
+  automationRuns = [{ id:'schedule-fixture', status:'failed', started_at:'2026-01-01T00:00:00Z', lease_until:'2026-01-01T00:03:00Z', error_code:'reconnect_required', results:[] }]
+  importRuns = [{ id:'import-fixture', source_id:sources[0].id, automation_run_id:'schedule-fixture', status:'failed', started_at:'2026-01-01T00:00:00Z', imported_count:0, duplicate_count:0, error_code:'reconnect_required' }]
+  await clickText('Refresh automation status')
+  await waitFor(`document.body.textContent.includes('Reconnect required. Reconnect Gmail') && document.body.textContent.includes('overdue')`)
+  await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true})
+  { const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:true}); await writeFile('artifacts/automation-error-390.png',Buffer.from(shot.data,'base64')) }
+  await evaluate(`document.querySelector('a[href="/dashboard"]').click()`)
+  await waitFor(`document.body.textContent.includes('Latest imported jobs') && document.body.textContent.includes('Import history')`)
+  jobs.unshift({...jobs[0],id:'scheduled-new',title:'Automatically discovered fixture'})
+  await evaluate(`window.dispatchEvent(new Event('focus'))`)
+  await waitFor(`document.body.textContent.includes('Automatically discovered fixture')`)
+  jobs.shift()
+  gmail.status = 'connected'
+  await evaluate(`document.querySelector('a[href="/settings"]').click()`)
+  await waitFor(`!!document.querySelector('#gmail-address')`)
+  await clickText('Refresh source status')
+  await waitFor(`!![...document.querySelectorAll('.badge')].find(e => e.textContent === 'Connected')`)
   for (const route of ['settings', 'jobs']) {
     await evaluate(`document.querySelector('a[href="/${route}"]').click()`)
     await waitFor(route === 'jobs' ? `!!document.querySelector('.job-item')` : `!!document.querySelector('#gmail-address')`)
@@ -243,7 +284,7 @@ try {
   const storageKeys = await evaluate('Object.keys(localStorage)')
   assert.ok(storageKeys.every(key => key.startsWith('sb-') && key.endsWith('-auth-token')), 'non-session browser persistence found')
   assert.deepEqual(consoleErrors, [])
-  console.log(`Real headless Edge PASS with mocked Supabase: login, profile save/reload, offline drafts, job save/dismiss, label confirmation, Gmail states, application draft/review/explicit confirmation/duplicate taps/statuses, layouts at 360/375/390/768/1024/1440 and landscape, ${caches.length} public cache entries, session-only localStorage. Screenshots: artifacts/. No phone installation or live Gmail/hosted checks.`)
+  console.log(`Real headless Edge PASS with mocked Supabase: login, profile save/reload, offline drafts, job save/dismiss, label confirmation, Gmail states, automation off/enable/pause/PHT/errors, dashboard automatic refresh, application draft/review/explicit confirmation/duplicate taps/statuses, layouts at 360/375/390/768/1024/1440 and landscape, ${caches.length} public cache entries, session-only localStorage. Screenshots: artifacts/. No phone installation or live Gmail/hosted checks.`)
   await send('Browser.close').catch(() => {})
 } finally {
   socket?.close()

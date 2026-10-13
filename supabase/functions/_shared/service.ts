@@ -5,7 +5,7 @@ import { authorizationUrl, decryptToken, encryptToken, fetchJson, gmailGet, gmai
 
 export type BackendConfig = { appOrigin: string; google: GoogleConfig }
 type Connection = { owner_id: string; expected_email: string; generation: string; status: string; granted_scopes?: string[]; send_consented_at?: string | null }
-type Source = { id: string; owner_id: string; kind: string; source_key: string; name: string; cursor: string | null; enabled: boolean }
+type Source = { id: string; owner_id: string; kind: string; source_key: string; name: string; cursor: string | null; enabled: boolean; confirmed_email: string | null }
 export const safeCode = (error: unknown) => error instanceof ServiceError ? error.code : 'request_failed'
 function checked<T>(result: { data: T; error: unknown }): T {
   if (result.error) throw new ServiceError('database_error')
@@ -78,34 +78,50 @@ async function labels(db: SupabaseClient, owner: string, config: GoogleConfig, t
 async function store(db: SupabaseClient, owner: string, source: string, external: string, job: unknown, origin: unknown) {
   return await rpc(db, 'store_job_candidate', { p_owner: owner, p_source: source, p_external: external, p_job: job, p_origin: origin }) === true
 }
-export async function importSource(db: SupabaseClient, owner: string, sourceId: string, config: GoogleConfig, transport: typeof fetch = fetch) {
-  const run = await rpc(db, 'start_job_import', { p_owner: owner, p_source: sourceId })
+export async function importSource(db: SupabaseClient, owner: string, sourceId: string, config: GoogleConfig, transport: typeof fetch = fetch,
+  scheduled?: { runId: string; deadline: number; guard: () => Promise<void> }) {
+  const run = scheduled
+    ? await rpc(db, 'start_scheduled_import', { p_run: scheduled.runId, p_source: sourceId })
+    : await rpc(db, 'start_job_import', { p_owner: owner, p_source: sourceId })
   let source: Source | null = null
   let gmailConnection: Connection | null = null
   let added = 0, duplicates = 0, cursor: string | null = null
-  const deadline = Date.now() + 90000
+  const deadline = Math.min(Date.now() + 90000, scheduled?.deadline ?? Infinity)
+  const guard = async () => {
+    if (Date.now() >= deadline) throw new ServiceError('interrupted')
+    await scheduled?.guard()
+    const current = checked(await db.from('job_sources').select('*').eq('id', sourceId).eq('owner_id', owner).single())
+    if (!current?.enabled || (source && current.source_key !== source.source_key)) throw new ServiceError('source_paused')
+    if (Date.now() >= deadline) throw new ServiceError('interrupted')
+  }
+  const provider: typeof fetch = async (input, init) => { await guard(); return transport(input, init) }
+  const save = async (external: string, job: unknown, origin: unknown) => {
+    await guard()
+    return await rpc(db, 'store_import_candidate', { p_owner: owner, p_run: run.id, p_external: external, p_job: job, p_origin: origin }) === true
+  }
   try {
     source = checked(await db.from('job_sources').select('*').eq('id', sourceId).eq('owner_id', owner).single())
     if (!source) throw new ServiceError('invalid_source')
     if (source.kind === 'gmail') {
       gmailConnection = await connection(db, owner)
-      const token = await gmailAccess(db, owner, config, transport)
+      if (source.confirmed_email !== gmailConnection.expected_email) throw new ServiceError('label_confirmation_required')
+      const token = await gmailAccess(db, owner, config, provider)
       if ((await connection(db, owner)).generation !== gmailConnection.generation) throw new ServiceError('interrupted')
       const params = new URLSearchParams({ labelIds: source.source_key, maxResults: '10', includeSpamTrash: 'false' })
       if (source.cursor) params.set('pageToken', source.cursor)
-      const page = await gmailGet(`messages?${params}`, token, transport)
+      const page = await gmailGet(`messages?${params}`, token, provider)
       cursor = typeof page.nextPageToken === 'string' ? page.nextPageToken : null
-      for (const item of (Array.isArray(page.messages) ? page.messages : []) as { id: string }[]) {
+      for (const item of (Array.isArray(page.messages) ? page.messages.slice(0, 10) : []) as { id: string }[]) {
         if (Date.now() > deadline) throw new ServiceError('interrupted')
         if ((await connection(db, owner)).generation !== gmailConnection.generation) throw new ServiceError('interrupted')
-        const message = await gmailGet(`messages/${encodeURIComponent(item.id)}?format=full`, token, transport)
+        const message = await gmailGet(`messages/${encodeURIComponent(item.id)}?format=full`, token, provider)
         if (!Array.isArray(message.labelIds) || !message.labelIds.includes(source.source_key)) continue
         const payload = (message.payload ?? {}) as GmailPart
         const sender = payload.headers?.find(header => header.name.toLowerCase() === 'from')?.value.slice(0, 1000) ?? null
         const sourceDate = validDate(Number(message.internalDate))
         const jobs = parseAlert(messageText(payload))
         for (const job of jobs) {
-          const fresh = await store(db, owner, source.id, `${item.id}:${job.canonical_url ?? 'review'}`, job, {
+          const fresh = await save(`${item.id}:${job.canonical_url ?? 'review'}`, job, {
             message_id: item.id, sender, source_date: sourceDate,
             source_url: `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(gmailConnection.expected_email)}#all/${encodeURIComponent(item.id)}`,
           })
@@ -115,7 +131,7 @@ export async function importSource(db: SupabaseClient, owner: string, sourceId: 
     } else if (source.kind === 'greenhouse') {
       if (!/^[a-zA-Z0-9_-]{1,100}$/.test(source.source_key)) throw new ServiceError('invalid_source')
       const base = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(source.source_key)}`
-      const [board, page] = await Promise.all([fetchJson(base, {}, transport), fetchJson(`${base}/jobs?content=true`, {}, transport)])
+      const [board, page] = await Promise.all([fetchJson(base, {}, provider), fetchJson(`${base}/jobs?content=true`, {}, provider)])
       if (!Array.isArray(page.jobs)) throw new ServiceError('provider_unavailable')
       const company = typeof board.name === 'string' ? plainText(board.name).slice(0, 500) : null
       const jobs = page.jobs.filter(job => Number.isSafeInteger(job.id)).sort((a, b) => a.id - b.id)
@@ -126,10 +142,11 @@ export async function importSource(db: SupabaseClient, owner: string, sourceId: 
       for (const item of batch) {
         if (Date.now() > deadline) throw new ServiceError('interrupted')
         const job = greenhouseCandidate(item, company)
-        const fresh = await store(db, owner, source.id, String(item.id), job, { source_date: job.published_at, source_url: job.canonical_url })
+        const fresh = await save(String(item.id), job, { source_date: job.published_at, source_url: job.canonical_url })
         if (fresh) added++; else duplicates++
       }
     } else throw new ServiceError('invalid_source')
+    await guard()
     await rpc(db, 'finish_job_import', { p_owner: owner, p_run: run.id, p_error: null, p_cursor: cursor, p_added: added, p_duplicates: duplicates })
     return { added, duplicates, more: !!cursor }
   } catch (error) {
@@ -141,6 +158,11 @@ export async function importSource(db: SupabaseClient, owner: string, sourceId: 
 export async function apiAction(db: SupabaseClient, owner: string, input: Record<string, unknown>, config: BackendConfig, transport: typeof fetch = fetch): Promise<unknown> {
   if (typeof input.action === 'string' && input.action.startsWith('application_')) return applicationAction(db, owner, input, () => gmailAccess(db, owner, config.google, transport, true), transport)
   switch (input.action) {
+    case 'set_automation': {
+      if (typeof input.enabled !== 'boolean') throw new ServiceError('invalid_action')
+      await rpc(db, 'set_discovery_automation', { p_owner: owner, p_enabled: input.enabled })
+      return { ok: true }
+    }
     case 'connect': return beginOAuth(db, owner, input.email, config.google)
     case 'connect_send': return beginOAuth(db, owner, input.email, config.google, true)
     case 'disconnect': await rpc(db, 'disconnect_gmail_v4', { p_owner: owner }); return { ok: true }
@@ -161,6 +183,10 @@ export async function apiAction(db: SupabaseClient, owner: string, input: Record
     }
     case 'toggle_source': {
       if (typeof input.enabled !== 'boolean' || typeof input.sourceId !== 'string') throw new ServiceError('invalid_source')
+      if (input.enabled) {
+        const source = checked(await db.from('job_sources').select('*').eq('owner_id', owner).eq('id', input.sourceId).single())
+        if (source.kind === 'gmail' && source.confirmed_email !== (await connection(db, owner)).expected_email) throw new ServiceError('label_confirmation_required')
+      }
       checked(await db.from('job_sources').update({ enabled: input.enabled }).eq('owner_id', owner).eq('id', input.sourceId))
       return { ok: true }
     }

@@ -3,12 +3,17 @@ import type { Candidate } from '../../supabase/functions/_shared/discovery'
 import { requireOnline, WorkspaceError } from './workspace'
 export type Job = Candidate & { id: string; owner_id: string; created_at: string }
 export type Source = { id: string; kind: 'gmail' | 'greenhouse' | 'manual'; source_key: string; name: string; enabled: boolean; cursor: string | null; last_success_at: string | null }
-export type ImportRun = { id: string; source_id: string; status: string; started_at: string; finished_at: string | null; imported_count: number; duplicate_count: number; error_code: string | null }
+export type ImportRun = { id: string; source_id: string; status: string; started_at: string; finished_at: string | null; imported_count: number; duplicate_count: number; error_code: string | null; automation_run_id?: string | null }
+export type Automation = { enabled: boolean; next_run_at: string | null; updated_at: string }
+export type AutomationRun = { id: string; status: string; started_at: string; finished_at: string | null; lease_until: string; error_code: string | null; results: { source_id: string; status: string; added?: number; duplicates?: number; more?: boolean; error_code?: string }[] }
 export type Origin = { id: string; job_id: string; source_id: string; source_url: string | null; message_id: string | null; sender: string | null; source_date: string | null }
 export type Review = { job_id: string; disposition: 'new' | 'saved' | 'dismissed'; reviewed: boolean }
 export type GmailConnection = { status: 'connected' | 'disconnected' | 'reconnect_required'; expected_email: string; connected_email: string | null; checked_at: string | null; error_code: string | null; granted_scopes?: string[]; send_consented_at?: string | null }
-export type Discovery = { connection: GmailConnection | null; sources: Source[]; runs: ImportRun[]; jobs: Job[]; origins: Origin[]; reviews: Review[]; more: boolean }
+export type Discovery = { connection: GmailConnection | null; sources: Source[]; runs: ImportRun[]; jobs: Job[]; origins: Origin[]; reviews: Review[]; more: boolean; automation?: Automation | null; automationRuns?: AutomationRun[]; scheduledResults?: ImportRun[] }
 export const errorMessages: Record<string, string> = {
+  label_confirmation_required: 'Confirm your Gmail label again in Settings for the current mailbox.',
+  automation_paused: 'Automation was paused. Enable it to continue at the next scheduled check.',
+  source_paused: 'This source was paused or changed. Review it in Settings before continuing.',
   invalid_state: 'This Gmail connection link expired or was already used. Start Connect Gmail again.',
   wrong_account: 'The selected Gmail account does not match your configured address. Reconnect with the correct account.',
   consent_denied: 'Gmail permission was not granted. You can try Connect Gmail again.',
@@ -78,14 +83,17 @@ async function rows<T>(client: SupabaseClient, table: string, limit = Infinity):
   return result
 }
 export async function loadDiscovery(client: SupabaseClient, limit = 100): Promise<Discovery> {
-  const [connection, sources, runs, jobs, origins, reviews] = await Promise.all([
+  const [connection, sources, runs, jobs, origins, reviews, automation, automationRuns, scheduledResults] = await Promise.all([
     client.from('gmail_connections').select('status,expected_email,connected_email,checked_at,error_code,granted_scopes,send_consented_at').maybeSingle(),
     rows<Source>(client, 'job_sources'),
     client.from('import_runs').select('*').order('started_at', { ascending: false }).limit(20),
     rows<Job>(client, 'imported_jobs', limit + 1), rows<Origin>(client, 'job_origins'), rows<Review>(client, 'job_reviews'),
+    client.from('discovery_automation').select('*').maybeSingle(),
+    client.from('automation_runs').select('*').order('started_at', { ascending: false }).limit(20),
+    rows<ImportRun>(client, 'latest_scheduled_imports'),
   ])
-  if (connection.error || runs.error) throw new WorkspaceError('Could not load job discovery. Check your connection and the Phase 3 backend setup, then refresh.')
-  return { connection: connection.data, sources, runs: runs.data ?? [], jobs: jobs.slice(0, limit), origins, reviews, more: jobs.length > limit }
+  if (connection.error || runs.error || automation.error || automationRuns.error) throw new WorkspaceError('Could not load job discovery. Check your connection and the Phase 5 backend setup, then refresh.')
+  return { connection: connection.data, sources, runs: runs.data ?? [], jobs: jobs.slice(0, limit), origins, reviews, more: jobs.length > limit, automation: automation.data, automationRuns: automationRuns.data ?? [], scheduledResults }
 }
 export async function saveReview(client: SupabaseClient, owner: string, job: string, disposition: Review['disposition'], reviewed: boolean) {
   requireOnline()

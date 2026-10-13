@@ -9,11 +9,11 @@ async function backend(kind = 'gmail') {
   const config: GoogleConfig = { clientId: 'fixture', clientSecret: 'inert-secret', redirectUri: 'https://example.invalid/callback', encryptionKey: randomSecret() }
   const connection = { owner_id: 'owner', generation: 'g', status: 'connected', expected_email: 'owner@example.invalid' }
   const credential = { generation: 'g', encrypted_refresh_token: await encryptToken('inert-refresh', 'owner', config.encryptionKey) }
-  const source = { id: 'source', owner_id: 'owner', kind, source_key: kind === 'gmail' ? 'Label_fixture' : 'fixture', cursor: null, enabled: true }
+  const source = { id: 'source', owner_id: 'owner', kind, source_key: kind === 'gmail' ? 'Label_fixture' : 'fixture', cursor: null, enabled: true, confirmed_email: 'owner@example.invalid' }
   const stored = new Map<string, unknown>()
   const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
     if (name === 'start_job_import') return { data: { id: 'run' }, error: null }
-    if (name === 'store_job_candidate') {
+    if (name === 'store_import_candidate') {
       const key = args.p_external as string, fresh = !stored.has(key)
       if (fresh) stored.set(key, args)
       return { data: fresh, error: null }
@@ -80,7 +80,7 @@ describe('fixture-only imports and credential lifecycle', () => {
     await expect(importSource(api.db, 'owner', 'source', api.config, transport)).rejects.toThrow('reconnect_required')
     expect(api.connection.status).toBe('reconnect_required')
     expect(api.rpc).toHaveBeenCalledWith('finish_job_import', expect.objectContaining({ p_error: 'reconnect_required' }))
-    expect(api.rpc).not.toHaveBeenCalledWith('store_job_candidate', expect.anything())
+    expect(api.rpc).not.toHaveBeenCalledWith('store_import_candidate', expect.anything())
   })
   it('does not mislabel outages as disconnection', async () => {
     const api = await backend()

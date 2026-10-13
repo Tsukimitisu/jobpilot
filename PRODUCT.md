@@ -11,7 +11,7 @@ web
 A personal job-search assistant for one owner, intended to bring job discovery,
 application preparation, Gmail delivery, and application tracking into one workspace.
 
-## Current implementation: Phase 4
+## Current implementation: Phase 5
 
 Supabase email/password authentication for a pre-created account, protected routes,
 a responsive application shell, administrator-appointed single-owner RLS, a persistent
@@ -30,18 +30,21 @@ Uncertain send outcomes require manual reconciliation in Gmail and are not retri
 automatically. Applications submitted outside JobPilot can be recorded manually.
 
 Unsaved application edits stay in memory; saved drafts use backend ownership checks
-and RLS. Gmail tokens and attachment handling stay on the backend. Discovery and
-application actions are owner-triggered; AI preparation, automated submissions,
-and scheduled work are not implemented. Hosted setup remains owner-run after
-review; see PHASE4.md for setup and verification boundaries.
+and RLS. Gmail tokens and attachment handling stay on the backend. Discovery can
+run hourly through an independently authenticated Supabase Edge Function and Cron,
+only after the owner enables automation. It defaults off and reads only confirmed,
+enabled sources. The owner can pause it, see Philippine-time schedules and source
+results, and review imported jobs/history on the dashboard. Applications remain
+owner-triggered; AI preparation and automated submissions are not implemented.
+Hosted setup remains administrator-run after review; see PHASE5.md for scheduler
+setup and verification boundaries, and PHASE4.md for the application workflow.
 
 ## Intended complete product (future work)
 
 - Support AI-assisted application preparation using explicitly approved data.
-- Run scheduled work through Supabase Edge Functions and Cron while the laptop is off.
 - Extend the installable app with future online job-search workflows.
 
-AI provider, automation approval rules, schedules, and future database policies
+AI provider, future application automation approval rules, and future database policies
 remain design decisions for later phases. Sources remain limited to manual entry,
 one selected Gmail label, and configured Greenhouse boards.
 

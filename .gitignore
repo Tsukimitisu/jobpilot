@@ -31,3 +31,4 @@ supabase/.branches/
 .browser-check/
 artifacts/
 supabase/functions/phase4-fixture/
+supabase/functions/phase5-fixture/

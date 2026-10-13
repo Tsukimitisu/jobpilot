@@ -6,6 +6,7 @@ import { WorkspaceProvider } from '../src/workspace/WorkspaceContext'
 import { DiscoveryProvider } from '../src/workspace/DiscoveryProvider'
 import { JobsPage } from '../src/workspace/JobsPage'
 import { SourceSettings } from '../src/workspace/SourceSettings'
+import { AutomationPage } from '../src/workspace/AutomationPage'
 import { manualCandidate } from '../supabase/functions/_shared/discovery'
 import { emptyProfile, profilePayload } from '../src/lib/profile'
 
@@ -48,18 +49,61 @@ function backend() {
     const input = options.body
     if (input.action === 'manual') state.tables.imported_jobs.push({ ...job, ...manualCandidate(input), id: 'manual' })
     if (input.action === 'disconnect') state.tables.gmail_connections = [{ status: 'disconnected', expected_email: 'owner@example.invalid' }]
+    if (input.action === 'set_automation') state.tables.discovery_automation = [{ enabled: input.enabled, next_run_at: input.enabled ? '2026-10-13T01:00:00Z' : null, updated_at: '2026-10-13T00:00:00Z' }]
     return { data: input.action === 'labels' ? { labels: [{ id: 'label', name: 'JobPilot/Alerts' }] } : { added: true, ok: true }, error: null }
   })
   const client = { from, rpc: async () => ({ data: state.owner, error: null }), functions: { invoke } } as unknown as SupabaseClient
   return { state, client, invoke, updates }
 }
-function open(api: ReturnType<typeof backend>, settings = false, route = '/settings') {
-  return render(<WorkspaceProvider client={api.client} ownerId="owner"><DiscoveryProvider><MemoryRouter initialEntries={[route]}>{settings ? <SourceSettings /> : <JobsPage />}</MemoryRouter></DiscoveryProvider></WorkspaceProvider>)
+function open(api: ReturnType<typeof backend>, settings: boolean | 'automation' = false, route = '/settings') {
+  return render(<WorkspaceProvider client={api.client} ownerId="owner"><DiscoveryProvider><MemoryRouter initialEntries={[route]}>{settings === 'automation' ? <AutomationPage /> : settings ? <SourceSettings /> : <JobsPage />}</MemoryRouter></DiscoveryProvider></WorkspaceProvider>)
 }
 beforeEach(() => { vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Live network prohibited') })); vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true) })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('Phase 3 UI with mocked Supabase and inert fixtures', () => {
+  it('defaults automation off, explicitly enables and pauses it, and displays Philippine time', async () => {
+    const api = backend(); open(api, 'automation')
+    await screen.findByText('Off')
+    expect(screen.getByText('None while off')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Enable automation' }))
+    await screen.findByRole('button', { name: 'Pause automation' })
+    expect(api.invoke).toHaveBeenCalledWith('jobpilot-api', expect.objectContaining({ body: { action: 'set_automation', enabled: true } }))
+    expect(screen.getByText(/Oct 13, 2026, 9:00 am PHT/i)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Pause automation' }))
+    await screen.findByText('Automation paused. Existing jobs are preserved.')
+    expect(screen.getByText('None while off')).toBeTruthy()
+    api.state.tables.discovery_automation[0].enabled = true
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh automation status' }))
+    await screen.findByRole('button', { name: 'Pause automation' })
+    expect(screen.queryByText('Automation paused. Existing jobs are preserved.')).toBeNull()
+  })
+  it('shows source failures, overdue scheduling, reconnect guidance, and prevents offline changes', async () => {
+    const api = backend()
+    api.state.tables.discovery_automation = [{ enabled: true, next_run_at: '2020-01-01T00:00:00Z' }]
+    api.state.tables.gmail_connections = [{ status: 'reconnect_required' }]
+    api.state.tables.import_runs = [{ id: 'run', source_id: 'source', automation_run_id: 'schedule', status: 'failed', imported_count: 0, duplicate_count: 0, started_at: '2020-01-01T00:00:00Z', error_code: 'reconnect_required' }]
+    open(api, 'automation')
+    await screen.findByText(/Reconnect required\. Reconnect Gmail/)
+    expect(screen.getByRole('alert').textContent).toContain('overdue')
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('offline')))
+    expect((screen.getByRole('button', { name: 'Pause automation' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+  it('automatically reloads imported jobs on returning to the app without invoking import', async () => {
+    const api = backend(); open(api)
+    await screen.findByText('75/100 preference score')
+    api.state.tables.imported_jobs[0].title = 'Scheduled fixture job'
+    act(() => window.dispatchEvent(new Event('focus')))
+    await screen.findByRole('heading', { name: 'Scheduled fixture job' })
+    expect(api.invoke).not.toHaveBeenCalled()
+  })
+  it('keeps automation inaccessible for a non-owner', async () => {
+    const api = backend(); api.state.owner = false; open(api, 'automation')
+    await screen.findByText('Owner access required')
+    expect(screen.queryByRole('button', { name: 'Enable automation' })).toBeNull()
+    expect(api.client.from).not.toHaveBeenCalled()
+  })
   it('explains scoring and persists save, dismiss, restore and reviewed state with owner filters', async () => {
     const api = backend(); open(api)
     await screen.findByText('75/100 preference score')
