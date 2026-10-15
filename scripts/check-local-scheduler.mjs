@@ -26,7 +26,8 @@ const request = async (token, body, scheduled = false, production = false) => {
   })
   return { status:response.status, data:await response.json() }
 }
-const due = () => sql(`update public.discovery_automation set next_run_at = now() - interval '1 minute' where owner_id = '${owner.id}'`)
+// Simulate passage to a later eligible hour without sleeping or touching hosted data.
+const due = () => sql(`update public.discovery_automation set next_run_at = now() - interval '1 minute' where owner_id = '${owner.id}'; update public.job_sources set next_eligible_at=null where owner_id='${owner.id}';`)
 try {
   const email = `fixture-${randomUUID()}@example.invalid`, password = randomBytes(32).toString('base64url')
   owner = check(await admin.auth.admin.createUser({email,password,email_confirm:true})).user
@@ -41,6 +42,7 @@ try {
   await api({action:'add_greenhouse',board:'fixture'})
   await api({action:'add_greenhouse',board:'fixture-disabled'})
   const sources = check(await admin.from('job_sources').select('*'))
+  await api({action:'toggle_source',sourceId:sources.find(s=>s.source_key==='fixture').id,enabled:true})
   await api({action:'toggle_source',sourceId:sources.find(s=>s.source_key==='fixture-disabled').id,enabled:false})
   await api({action:'set_automation',enabled:true})
   assert.equal((await request(secret,{},true)).data.status,'skipped','future slot is not due')
@@ -70,6 +72,43 @@ try {
   assert.equal(check(await admin.from('imported_jobs').select('id')).length,56,'expired grant preserves jobs')
   assert.equal(check(await admin.from('import_runs').select('id').eq('source_id',sources.find(s=>s.source_key==='fixture-disabled').id)).length,0)
   assert.equal(check(await admin.from('applications').select('id')).length,0,'scheduler never creates applications')
+  await api({action:'set_automation',enabled:false})
+  for(const s of check(await admin.from('job_sources').select('id')))await api({action:'toggle_source',sourceId:s.id,enabled:false})
+  await api({action:'save_search_profile',profile:{name:'Entry',desired_titles:['Junior Developer'],alternative_titles:[],required_keywords:[],excluded_keywords:[],locations:['Cebu'],work_modes:['remote'],employment_types:[],max_experience:0,minimum_salary:null,results_limit:2,enabled:true}})
+  for(const kind of ['lever','ashby','adzuna'])await api({action:'add_source',kind,board:kind==='adzuna'?'sg':'fixture'})
+  const broad=check(await admin.from('job_sources').select('*').in('kind',['lever','ashby','adzuna']))
+  assert.ok(broad.every(s=>!s.enabled),'new sources disabled')
+  const before=check(await admin.from('imported_jobs').select('id')).length
+  for(const s of broad){assert.ok((await api({action:'test_source',sourceId:s.id})).board);await api({action:'toggle_source',sourceId:s.id,enabled:true})}
+  assert.equal(check(await admin.from('imported_jobs').select('id')).length,before,'tests preview without importing')
+  due()
+  const manual=await Promise.all([request(token,{action:'run_discovery'}),request(token,{action:'run_discovery'})])
+  assert.equal(manual.filter(r=>r.status===200).length,1,'manual repeated clicks fenced')
+  assert.equal(manual.filter(r=>r.status===400).length,1)
+  assert.equal(check(await admin.from('imported_jobs').select('id')).length,before+5,'bounded Lever Ashby Adzuna batches imported')
+  await api({action:'set_automation',enabled:true});due()
+  const tick=await request(secret,{},true)
+  assert.equal(tick.data.status,'succeeded')
+  assert.equal(check(await admin.from('imported_jobs').select('id')).length,before+8,'later scheduled tick resumes public ATS pages')
+  await api({action:'add_greenhouse',board:'fixture-failed'})
+  const failedBoard=check(await admin.from('job_sources').select('id').eq('source_key','fixture-failed').single())
+  await api({action:'toggle_source',sourceId:failedBoard.id,enabled:true})
+  due()
+  assert.equal((await request(secret,{},true)).data.status,'partial','one provider failure does not stop other eligible sources')
+  const sp=check(await admin.from('search_profiles').select('*').single())
+  await api({action:'save_search_profile',profile:{...sp,desired_titles:['Rate']}})
+  await api({action:'add_source',kind:'adzuna',board:'gb'})
+  const gb=check(await admin.from('job_sources').select('*').eq('kind','adzuna').eq('source_key','gb').single())
+  await api({action:'toggle_source',sourceId:gb.id,enabled:true})
+  due()
+  const limited=await request(token,{action:'import',sourceId:gb.id})
+  assert.equal(limited.data.error,'rate_limited')
+  const sg=broad.find(s=>s.kind==='adzuna')
+  const blocked=await request(token,{action:'import',sourceId:sg.id})
+  assert.equal(blocked.status,400,'other Adzuna market shares cooldown')
+  assert.ok(check(await admin.from('job_sources').select('next_eligible_at').eq('kind','adzuna')).every(s=>Date.parse(s.next_eligible_at)>Date.now()+7000000))
+  assert.equal(check(await admin.from('applications').select('id')).length,0)
+  console.log('Phase 6 local Edge integration PASS: disabled defaults, previews, manual overlap, three public connectors, profile limits, scheduler continuation, shared Retry-After; providers mocked.')
   console.log('Local scheduled Edge/Auth/PostgREST PASS: dedicated authentication, owner control, overlap, disabled source, cursor continuation, deduplication, label membership, expired grant, jobs preserved, zero applications. Providers mocked; zero real email.')
 } finally {
   if (owner) {
@@ -82,6 +121,9 @@ try {
       delete from public.discovery_automation where owner_id='${owner.id}';
       delete from public.job_sources where owner_id='${owner.id}';
       delete from public.gmail_connections where owner_id='${owner.id}';
+      delete from public.search_profiles where owner_id='${owner.id}';
+      delete from jobpilot_private.manual_discovery where owner_id='${owner.id}';
+      delete from jobpilot_private.provider_cooldowns where owner_id='${owner.id}';
       delete from jobpilot_private.owner_registration where user_id='${owner.id}'; commit;`)
     check(await admin.auth.admin.deleteUser(owner.id))
   }

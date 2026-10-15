@@ -2,6 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { applicationAction } from '../lib/applications'
 import { canonicalUrl, duplicateSuggestions, matchJob } from '../../supabase/functions/_shared/discovery'
+import { scoreSearch } from '../../supabase/functions/_shared/search'
 import { discoveryAction, displayDate, saveReview, type Job, type Review } from '../lib/discovery'
 import { OwnerContent } from './WorkspaceContext'
 import { useWorkspace } from './useWorkspace'
@@ -25,7 +26,12 @@ function JobsContent() {
   const [sort, setSort] = useState('match')
   const disabled = busy || !online || !data
   const reviews = new Map(data?.reviews.map(item => [item.job_id, item]))
-  const ranked = useMemo(() => (data?.jobs ?? []).map(job => ({ job, match: matchJob(job, workspace?.profile ?? null) })), [data?.jobs, workspace?.profile])
+  const ranked = useMemo(() => (data?.jobs ?? []).map(job => {
+    const searchMatches=(data?.searchProfiles??[]).filter(p=>p.enabled).map(p=>scoreSearch(job,p))
+    const match=matchJob(job, workspace?.profile ?? null)
+    if(searchMatches.length)match.score=Math.max(...searchMatches.map(m=>m.score))
+    return {job,match,searchMatches}
+  }), [data?.jobs,data?.searchProfiles,workspace?.profile])
   const visible = ranked.filter(({ job }) => {
     const review = reviews.get(job.id)
     return (!query || `${job.title ?? ''} ${job.company ?? ''} ${job.location ?? ''} ${job.description}`.toLowerCase().includes(query.toLowerCase()))
@@ -48,7 +54,7 @@ function JobsContent() {
   return <>
     <DiscoveryStatus />
     <div className="action-row discovery-toolbar"><button className="button button-secondary" disabled={busy || loading || !online} onClick={() => void refresh()}>Refresh jobs & status</button><Link className="text-link" to="/settings">Manage sources</Link></div>
-    <details className="panel settings-section"><summary>Import from your sources</summary><p>Imports run only when you request them. Continue paged imports until complete.</p><SourceList />{data && !data.sources.some(source => source.kind !== 'manual') && <p>No import sources configured. <Link to="/settings">Connect a source in Settings</Link> or add a job below.</p>}</details>
+    <details className="panel settings-section"><summary>Import from your sources</summary><p>Request a check here, or enable hourly discovery in Automation settings. Partial imports resume on later checks.</p><SourceList />{data && !data.sources.some(source => source.kind !== 'manual') && <p>No import sources configured. <Link to="/settings">Connect a source in Settings</Link> or add a job below.</p>}</details>
     <details className="panel settings-section"><summary>Add a job manually</summary>
       <p>Paste a URL, a description, or both. JobPilot does not browse or submit to the linked site. Add only details you can confirm.</p>
       <form onSubmit={event => void addManual(event)}>
@@ -73,10 +79,10 @@ function JobsContent() {
       <div className="choice-list"><label><input type="checkbox" checked={reviewOnly} onChange={event => setReviewOnly(event.target.checked)} />Needs review only</label></div>
       </details>
     </section>
-    <details><summary>How scoring works</summary><p className="fine-print">Scores use your saved profile: exact required-skill overlap up to 50 points, title 25, work mode 15, location 10. Unknowns earn no points. Salary, experience, eligibility, employment type, and availability are not assessed. {workspace?.profile ? '' : 'Save a profile to rank against your preferences.'}</p></details>
+    <details><summary>How scoring works</summary><p className="fine-print">Enabled search profiles use title 35, required keywords up to 25, location 15, work mode 15, and employment type 10 points. Excluded keywords subtract 40 each; excessive experience subtracts 30. Scores are clamped to 0 to 100. Salary is explained separately. Without an enabled search profile, the original saved-profile score uses skills 50, title 25, work mode 15 and location 10. Unknowns earn no points. Eligibility and availability are not confirmed. {workspace?.profile ? '' : 'Save a profile to rank against your preferences.'}</p></details>
     {data && <p className="results-count" role="status">{visible.length} of {data.jobs.length} loaded jobs shown{data.more ? ' · More jobs available below' : ''}</p>}
     {data && !visible.length && <section className="panel empty-state"><h2>{data.jobs.length ? 'No jobs match these filters.' : 'Your opportunities start here.'}</h2><p>{data.jobs.length ? 'Try another filter or search term.' : 'Add a job manually or import from a configured source. Ambiguous alerts will be marked for review.'}</p></section>}
-    <div className="job-list">{visible.map(({ job, match }) => {
+    <div className="job-list">{visible.map(({ job, match, searchMatches }) => {
       const review = reviews.get(job.id), state = review?.disposition ?? 'new'
       const origins = data?.origins.filter(origin => origin.job_id === job.id) ?? []
       const duplicateIds = duplicateSuggestions(job, data?.jobs ?? []).filter(id => {
@@ -87,6 +93,9 @@ function JobsContent() {
       return <article className="panel job-item" key={job.id} id={`job-${job.id}`}>
         <div className="resume-title"><h2>{job.title ?? 'Alert awaiting review'}</h2><span className="badge">{state}</span><span className="badge">{match.score}/100 preference score</span></div>
         <p>{job.company ?? 'Company unknown'} · {job.location ?? 'Location unknown'} · {job.work_mode ?? 'Work mode unknown'}</p>
+        <p>{job.employment_type??'Employment type unknown'} · {job.experience_years==null?'Experience requirement unknown':`${job.experience_years} years required`} · {job.salary_min==null?'Salary unknown':`${job.salary_currency??'Currency unknown'} ${job.salary_min} / ${job.salary_period??'period unknown'}`}</p>
+        {origins.some(o=>o.parsing_confidence==='low') && <p className="notice">Low-confidence alert extraction — review the original email.</p>}
+        {searchMatches.length>0 && <details><summary>Search profile matches</summary><p>Best enabled profile determines the displayed score. Unknown data earns no points; scores do not confirm eligibility.</p>{searchMatches.map(m=><div key={m.profile_id}><h3>{m.profile_name}: {m.score}/100</h3><ul>{m.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul></div>)}</details>}
         <p className="fine-print">Source: {[...new Set(origins.map(origin => data?.sources.find(source => source.id === origin.source_id)?.name ?? 'Unknown'))].join(', ') || 'Unknown'} · {review?.reviewed ? 'Reviewed' : job.uncertainty.length ? 'Needs review' : 'No extraction warnings'}</p>
         <p className="fine-print">Imported {displayDate(job.created_at)} · Source date {job.published_at || origins[0]?.source_date ? displayDate(job.published_at ?? origins[0]?.source_date) : 'unknown'}</p>
         <dl className="job-fit"><div><dt>Matched skills</dt><dd>{match.matched.join(', ') || 'None confirmed'}</dd></div><div><dt>Requirements missing from saved profile</dt><dd>{match.missing.join(', ') || (job.requirements.length ? 'None among extracted skills' : 'Requirements unknown')}</dd></div><div><dt>Title fit</dt><dd>{match.title}</dd></div><div><dt>Location fit</dt><dd>{match.location}</dd></div><div><dt>Work-mode fit</dt><dd>{match.mode}</dd></div></dl>
@@ -96,7 +105,7 @@ function JobsContent() {
         {!!duplicateIds.length && <p className="notice">Possible duplicate from another source: {duplicateIds.length} loaded jobs have the same title, company, and location. Records have not been merged. Search the title with All review states to compare.</p>}
         <details><summary>Description & source history</summary><p className="job-description">{job.description || 'No description available. Read the original source.'}</p><ul>{origins.map(origin => {
           const sourceUrl = canonicalUrl(origin.source_url)
-          return <li key={origin.id}><strong>{data?.sources.find(source => source.id === origin.source_id)?.name ?? 'Source unavailable'}</strong><p>{origin.sender ? `Sender: ${origin.sender} · ` : ''}Source date: {origin.source_date ? displayDate(origin.source_date) : 'unknown'}</p>{origin.message_id && <p>Message ID: {origin.message_id}</p>}{sourceUrl && <a className="text-link" href={origin.source_url!} target="_blank" rel="noopener noreferrer">Open source</a>}</li>
+          return <li key={origin.id}><strong>{data?.sources.find(source => source.id === origin.source_id)?.name ?? 'Source unavailable'}</strong><p>{origin.provider??'Original provider unknown'} · Parsing confidence: {origin.parsing_confidence??'Not recorded'}</p><p>{origin.sender ? `Sender: ${origin.sender} · ` : ''}Source date: {origin.source_date ? displayDate(origin.source_date) : 'unknown'}</p>{origin.message_id && <p>Message ID: {origin.message_id}</p>}{sourceUrl && <a className="text-link" href={origin.source_url!} target="_blank" rel="noopener noreferrer">Open source</a>}{canonicalUrl(origin.direct_url) && <a className="text-link" href={canonicalUrl(origin.direct_url)!} target="_blank" rel="noopener noreferrer">Open discovered job</a>}</li>
         })}</ul></details>
         <div className="action-row"><button className="button button-secondary" disabled={disabled} onClick={() => void reviewJob(job, state === 'saved' ? 'new' : 'saved', review?.reviewed ?? false)}>{state === 'saved' ? 'Unsave job' : 'Save job'}</button><button className="button button-secondary" disabled={disabled} onClick={() => void reviewJob(job, state === 'dismissed' ? 'new' : 'dismissed', review?.reviewed ?? false)}>{state === 'dismissed' ? 'Restore job' : 'Dismiss job'}</button>
           {(state === 'saved' || review?.reviewed) && state !== 'dismissed' && <button className="button" disabled={disabled} onClick={() => void run(async () => {

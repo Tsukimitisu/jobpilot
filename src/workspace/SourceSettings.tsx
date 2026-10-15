@@ -1,10 +1,11 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { discoveryAction, discoveryError, displayDate, gmailStatus } from '../lib/discovery'
 import { OwnerContent } from './WorkspaceContext'
 import { useWorkspace } from './useWorkspace'
 import { useDiscovery } from './useDiscovery'
 import { DiscoveryStatus, SourceList } from './DiscoveryStatus'
+import { SearchSettings } from './SearchSettings'
 
 export function SourceSettings() {
   return <OwnerContent><SourceSettingsContent /></OwnerContent>
@@ -15,6 +16,13 @@ function SourceSettingsContent() {
   const [params, setParams] = useSearchParams()
   const [email, setEmail] = useState<string | null>(null)
   const [board, setBoard] = useState('')
+  const [kind, setKind] = useState('greenhouse')
+  const [adzunaStatus,setAdzunaStatus]=useState('Checking…')
+  useEffect(()=>{
+    let active=true
+    if(online)void discoveryAction<{adzuna:string}>(client,{action:'discovery_configuration'}).then(v=>{if(active)setAdzunaStatus(v.adzuna??'Unavailable')},()=>{if(active)setAdzunaStatus('Unavailable')})
+    return()=>{active=false}
+  },[client,online])
   const [labels, setLabels] = useState<{ id: string; name: string }[]>([])
   const [label, setLabel] = useState('')
   const connection = data?.connection
@@ -33,6 +41,7 @@ function SourceSettingsContent() {
   }
   return <>
     <DiscoveryStatus />
+    <SearchSettings />
     {callback && <div className="notice" role="status"><p>{callback === 'connected' ? 'Gmail consent returned. Check the saved connection status below.' : discoveryError(callback)}</p><button className="button button-secondary" onClick={() => { params.delete('gmail'); setParams(params, { replace: true }) }}>Dismiss connection notice</button></div>}
     <section className="panel settings-section" aria-labelledby="gmail-heading">
       <div className="resume-title"><h2 id="gmail-heading">Gmail connection</h2><span className="badge">{data ? gmailStatus(connection ?? null) : loading ? 'Checking…' : 'Unavailable'}</span></div>
@@ -64,11 +73,16 @@ function SourceSettingsContent() {
       {labels.length > 0 && <form onSubmit={event => { event.preventDefault(); void run(async () => { await discoveryAction(client, { action: 'save_gmail_label', labelId: label }); return 'Gmail import label confirmed.' }) }}>
         <div className="field"><label htmlFor="gmail-label">Import label</label><select id="gmail-label" value={label} required disabled={disabled} onChange={event => setLabel(event.target.value)}><option value="">Choose a label</option>{labels.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><button className="button" disabled={disabled || !label}>Confirm label</button>
       </form>}
-      <form onSubmit={event => { event.preventDefault(); void run(async () => { await discoveryAction(client, { action: 'add_greenhouse', board }); setBoard(''); return 'Greenhouse source saved. Select Import now to load its public jobs.' }) }}>
-        <div className="field"><label htmlFor="greenhouse-board">Greenhouse company board token</label><input id="greenhouse-board" value={board} pattern="[a-zA-Z0-9_-]{1,100}" required maxLength={100} disabled={disabled} onChange={event => setBoard(event.target.value)} /><span className="fine-print">Enter the token from the company’s Greenhouse board URL, not the full URL. Only its public job-board API is used.</span></div><button className="button button-secondary" disabled={disabled}>Add Greenhouse source</button>
+      <p>Job alerts from LinkedIn, Indeed, JobStreet, Glassdoor, Kalibrr and Bossjob are read only from this confirmed label. JobPilot does not log in to or scrape those websites.</p>
+      <form onSubmit={event => { event.preventDefault(); void run(async () => { await discoveryAction(client, { action: 'add_source', kind, board }); setBoard(''); return 'Source saved disabled. Test it to preview the board, then explicitly enable it.' }) }}>
+        <div className="field"><label htmlFor="source-kind">Public source provider</label><select id="source-kind" value={kind} disabled={disabled} onChange={e=>{setKind(e.target.value);setBoard('')}}><option value="greenhouse">Greenhouse</option><option value="lever">Lever</option><option value="ashby">Ashby</option><option value="adzuna">Adzuna</option></select></div>
+        {kind==='adzuna'?<div className="field"><label htmlFor="source-market">Adzuna market</label><select id="source-market" required disabled={disabled} value={board} onChange={e=>setBoard(e.target.value)}><option value="">Choose a market</option>{['gb','us','au','at','br','ca','de','fr','in','it','nl','nz','pl','sg','za'].map(v=><option key={v} value={v}>{v.toUpperCase()}</option>)}</select><p>Adzuna: {adzunaStatus}. The Philippines is not an available market. Searches use titles and keywords; Philippine locations and PHP salary preferences are assessed locally, not sent as foreign-market filters. Remote eligibility must be verified.</p></div>:
+        <div className="field"><label htmlFor="greenhouse-board">{kind==='greenhouse'?'Greenhouse':kind==='lever'?'Lever':'Ashby'} company board identifier</label><input id="greenhouse-board" value={board} pattern="[a-zA-Z0-9_-]{1,100}" required maxLength={100} disabled={disabled} onChange={event => setBoard(event.target.value)} /><span className="fine-print">Use the company identifier from its hosted board URL. Lever uses the global public endpoint. Test shows available titles and a company name only when the API supplies it.</span></div>}
+        <button className="button button-secondary" disabled={disabled}>Add disabled source</button>
       </form>
+      <button className="button" disabled={disabled} onClick={()=>void run(async()=>{const result=await discoveryAction<{results:{error?:string}[]}>(client,{action:'run_discovery'});return `Discovery checked ${result.results.length} eligible sources. ${result.results.filter(v=>v.error).length} failed; see source health below.`})}>Run discovery now</button>
       {data && !data.sources.some(source => source.kind !== 'manual') && <p className="notice">No import sources configured. Manual job entry is available in Jobs.</p>}
-      <SourceList configure />
+      <SourceList configure adzunaStatus={adzunaStatus} />
       <button className="button button-secondary" disabled={busy || loading || !online} onClick={() => void refresh()}>Refresh source status</button>
     </section>
   </>

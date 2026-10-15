@@ -47,7 +47,7 @@ export function schedulerHandler(db: SupabaseClient, config: BackendConfig, secr
       for (const source of sources) {
         await guard()
         try {
-          const result = await importSource(db, run.owner_id, source.id, config.google, bounded, { runId: run.id, deadline, guard })
+          const result = await importSource(db, run.owner_id, source.id, config.google, bounded, { runId: run.id, deadline, guard }, config.adzuna)
           results.push({ source_id: source.id, status: 'succeeded', ...result })
         } catch (error) { results.push({ source_id: source.id, status: 'failed', error_code: safeCode(error) }) }
       }

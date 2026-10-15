@@ -11,7 +11,7 @@ web
 A personal job-search assistant for one owner, intended to bring job discovery,
 application preparation, Gmail delivery, and application tracking into one workspace.
 
-## Current implementation: Phase 5
+## Current implementation: Phase 6
 
 Supabase email/password authentication for a pre-created account, protected routes,
 a responsive application shell, administrator-appointed single-owner RLS, a persistent
@@ -39,14 +39,21 @@ owner-triggered; AI preparation and automated submissions are not implemented.
 Hosted setup remains administrator-run after review; see PHASE5.md for scheduler
 setup and verification boundaries, and PHASE4.md for the application workflow.
 
+Phase 6 adds owner-only search profiles, conservative alert parsing and confidence,
+public Lever/Ashby boards, optional server-secret Adzuna searches, cross-source
+deduplication and provenance, explainable profile scores, source health and previews,
+and bounded resumable work through the existing hourly scheduler. New public sources
+and profiles start disabled. Adzuna has no Philippine market; overseas eligibility
+remains unverified. See PHASE6.md for limitations and the pending hosted rollout.
+
 ## Intended complete product (future work)
 
 - Support AI-assisted application preparation using explicitly approved data.
 - Extend the installable app with future online job-search workflows.
 
 AI provider, future application automation approval rules, and future database policies
-remain design decisions for later phases. Sources remain limited to manual entry,
-one selected Gmail label, and configured Greenhouse boards.
+remain design decisions for later phases. Discovery includes manual entry, one confirmed Gmail label, configured public
+Greenhouse/Lever/Ashby boards, and optional Adzuna country-market searches.
 
 ## Constraints
 

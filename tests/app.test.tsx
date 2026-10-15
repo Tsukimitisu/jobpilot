@@ -163,7 +163,7 @@ describe('session lifecycle', () => {
     await screen.findByText('Your setup checklist')
     fireEvent.click(screen.getAllByRole('link', { name: 'Jobs' })[0])
     expect(screen.getByRole('heading', { name: 'Jobs' })).toBeTruthy()
-    expect(screen.getByText('Owner access required')).toBeTruthy()
+    expect(await screen.findByText('Owner access required')).toBeTruthy()
     fireEvent.click(screen.getAllByRole('link', { name: 'Applications' })[0])
     expect(screen.getByText('Owner access required')).toBeTruthy()
     fireEvent.click(screen.getAllByRole('link', { name: 'Settings' })[0])

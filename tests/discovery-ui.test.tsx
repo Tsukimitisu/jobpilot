@@ -48,6 +48,12 @@ function backend() {
   const invoke = vi.fn(async (_name: string, options: { body: Record<string, unknown> }) => {
     const input = options.body
     if (input.action === 'manual') state.tables.imported_jobs.push({ ...job, ...manualCandidate(input), id: 'manual' })
+    if (input.action === 'save_search_profile') {const p=input.profile as Record<string,unknown>;state.tables.search_profiles=[{...p,id:p.id??'search-profile'}]}
+    if (input.action === 'delete_search_profile') state.tables.search_profiles=[]
+    if (input.action === 'add_source') state.tables.job_sources.push({id:'new-source',kind:input.kind,source_key:input.board,name:`${input.kind}: ${input.board}`,enabled:false})
+    if (input.action === 'discovery_configuration') return {data:{adzuna:'Not configured'},error:null}
+    if (input.action === 'test_source') return {data:{company:null,board:'fixture',titles:['Fixture public job']},error:null}
+    if (input.action === 'run_discovery') return {data:{results:[]},error:null}
     if (input.action === 'disconnect') state.tables.gmail_connections = [{ status: 'disconnected', expected_email: 'owner@example.invalid' }]
     if (input.action === 'set_automation') state.tables.discovery_automation = [{ enabled: input.enabled, next_run_at: input.enabled ? '2026-10-13T01:00:00Z' : null, updated_at: '2026-10-13T00:00:00Z' }]
     return { data: input.action === 'labels' ? { labels: [{ id: 'label', name: 'JobPilot/Alerts' }] } : { added: true, ok: true }, error: null }
@@ -62,6 +68,51 @@ beforeEach(() => { vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Live ne
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('Phase 3 UI with mocked Supabase and inert fixtures', () => {
+  it('saves a disabled search profile with bounded preferences, enables it, edits and removes it',async()=>{
+    const api=backend();open(api,true)
+    await screen.findByRole('heading',{name:'Search profiles'})
+    await waitFor(()=>expect((screen.getByLabelText('Profile name') as HTMLInputElement).disabled).toBe(false))
+    fireEvent.click(screen.getByText('Add search profile'))
+    fireEvent.change(screen.getByLabelText('Profile name'),{target:{value:'Cebu entry roles'}})
+    fireEvent.change(screen.getByLabelText('Desired job titles (comma separated)'),{target:{value:'Developer, QA Engineer'}})
+    fireEvent.change(screen.getByLabelText('Preferred Philippine locations (comma separated)'),{target:{value:'Cebu'}})
+    fireEvent.click(screen.getByRole('button',{name:'Save search profile'}))
+    await screen.findByRole('heading',{name:'Cebu entry roles'})
+    expect(api.state.tables.search_profiles[0]).toMatchObject({enabled:false,desired_titles:['Developer','QA Engineer'],locations:['Cebu']})
+    fireEvent.click(screen.getByRole('button',{name:'Enable Cebu entry roles'}))
+    await waitFor(()=>expect(api.state.tables.search_profiles[0].enabled).toBe(true))
+    await waitFor(()=>expect((screen.getByRole('button',{name:'Edit Cebu entry roles'}) as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByRole('button',{name:'Edit Cebu entry roles'}))
+    expect((screen.getByLabelText('Profile name') as HTMLInputElement).value).toBe('Cebu entry roles')
+    fireEvent.click(screen.getByRole('button',{name:'Remove Cebu entry roles'}))
+    await waitFor(()=>expect(api.state.tables.search_profiles).toHaveLength(0))
+  })
+  it('shows missing Adzuna configuration and creates public boards disabled',async()=>{
+    const api=backend();open(api,true)
+    await waitFor(()=>expect((screen.getByLabelText('Public source provider') as HTMLSelectElement).disabled).toBe(false))
+    fireEvent.change(screen.getByLabelText('Public source provider'),{target:{value:'adzuna'}})
+    expect(document.body.textContent).toContain('Adzuna: Not configured')
+    expect(document.body.textContent).toContain('The Philippines is not an available market')
+    fireEvent.change(screen.getByLabelText('Public source provider'),{target:{value:'lever'}})
+    fireEvent.change(screen.getByLabelText('Lever company board identifier'),{target:{value:'fixture'}})
+    fireEvent.click(screen.getByRole('button',{name:'Add disabled source'}))
+    await screen.findByRole('heading',{name:'lever: fixture'})
+    expect(api.state.tables.job_sources.at(-1)?.enabled).toBe(false)
+    await waitFor(()=>expect((screen.getByRole('button',{name:'Test source lever: fixture'}) as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByRole('button',{name:'Test source lever: fixture'}))
+    await screen.findByText('Fixture public job')
+    expect(document.body.textContent).toContain('Company: Not supplied by provider')
+  })
+  it('shows low confidence and explained search matches with unknown data',async()=>{
+    const api=backend()
+    api.state.tables.job_origins[0].parsing_confidence='low'
+    api.state.tables.search_profiles=[{id:'profile',name:'Entry',enabled:true,desired_titles:['Frontend Engineer'],alternative_titles:[],required_keywords:['React'],excluded_keywords:[],locations:['London'],work_modes:['remote'],employment_types:[],max_experience:0,minimum_salary:null,results_limit:20}]
+    open(api)
+    await screen.findByRole('heading',{name:'Frontend Engineer'})
+    expect(document.body.textContent).toContain('Low-confidence alert extraction')
+    expect(document.body.textContent).toContain('Title matched')
+    expect(document.body.textContent).toContain('Experience requirement unknown')
+  })
   it('defaults automation off, explicitly enables and pauses it, and displays Philippine time', async () => {
     const api = backend(); open(api, 'automation')
     await screen.findByText('Off')
@@ -189,4 +240,14 @@ describe('Phase 3 UI with mocked Supabase and inert fixtures', () => {
     await screen.findByText('Owner access required')
     await waitFor(() => expect(api.client.from).not.toHaveBeenCalled())
   })
+})
+
+
+it('shows inherited shared provider cooldown without inventing a failed attempt',async()=>{
+  const api=backend()
+  api.state.tables.job_sources=[{id:'cooling',kind:'adzuna',source_key:'sg',name:'Adzuna SG',enabled:true,provider_retry_at:new Date(Date.now()+7200000).toISOString(),last_error_code:null}]
+  open(api,true)
+  expect(await screen.findByText(/Provider rate limit or retry delay applies to every adzuna source/)).toBeTruthy()
+  expect((screen.getByRole('button',{name:'Test source Adzuna SG'}) as HTMLButtonElement).disabled).toBe(true)
+  expect(screen.queryByText(/Last run: failed/)).toBeNull()
 })

@@ -1,4 +1,6 @@
 export type Candidate = {
+  employment_type?: string | null; experience_years?: number | null; salary_min?: number | null; salary_currency?: string | null; salary_period?: string | null
+  provider?: string; provider_external_id?: string | null; parsing_confidence?: 'high' | 'medium' | 'low'
   title: string | null; company: string | null; location: string | null; work_mode: string | null
   description: string; canonical_url: string | null; requirements: string[]; uncertainty: string[]; published_at: string | null
 }
@@ -36,7 +38,13 @@ const field = (text: string, label: string, limit = 500) => {
 function candidate(text: string): Candidate {
   const mode = field(text, 'Work mode')?.toLowerCase() ?? null
   const required = field(text, 'Required skills')
+  const years=field(text,'(?:Minimum experience|Experience required)')?.match(/^(\d{1,2})\s*years?$/i)
+  const salary=field(text,'Salary')?.match(/^PHP\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per month|\/month)$/i)
+  const type=field(text,'Employment type')?.toLowerCase()
   return {
+    experience_years:years && Number(years[1])<=80?Number(years[1]):null,
+    employment_type:type && ['full-time','part-time','contract','temporary','internship','permanent'].includes(type)?type:null,
+    salary_min:salary?Number(salary[1].replaceAll(',','')):null,salary_currency:salary?'PHP':null,salary_period:salary?'month':null,
     title: field(text, '(?:Job title|Title)'), company: field(text, 'Company'), location: field(text, 'Location'),
     work_mode: mode && ['remote', 'hybrid', 'on-site'].includes(mode) ? mode : null,
     description: text, canonical_url: canonicalUrl(field(text, '(?:Job URL|URL)', 2048)),

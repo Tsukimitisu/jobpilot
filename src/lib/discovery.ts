@@ -1,16 +1,21 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Candidate } from '../../supabase/functions/_shared/discovery'
+import type { SearchProfile, SearchMatch } from '../../supabase/functions/_shared/search'
 import { requireOnline, WorkspaceError } from './workspace'
-export type Job = Candidate & { id: string; owner_id: string; created_at: string }
-export type Source = { id: string; kind: 'gmail' | 'greenhouse' | 'manual'; source_key: string; name: string; enabled: boolean; cursor: string | null; last_success_at: string | null }
+export type Job = Candidate & { id: string; owner_id: string; created_at: string; profile_matches?: SearchMatch[] }
+export type Source = { id: string; kind: 'gmail' | 'greenhouse' | 'manual' | 'lever' | 'ashby' | 'adzuna'; source_key: string; name: string; enabled: boolean; cursor: string | null; last_success_at: string | null; removed_at?: string | null; next_eligible_at?: string | null; provider_retry_at?: string | null; last_attempted_at?: string | null; last_error_code?: string | null; last_added?: number; last_duplicates?: number }
 export type ImportRun = { id: string; source_id: string; status: string; started_at: string; finished_at: string | null; imported_count: number; duplicate_count: number; error_code: string | null; automation_run_id?: string | null }
 export type Automation = { enabled: boolean; next_run_at: string | null; updated_at: string }
 export type AutomationRun = { id: string; status: string; started_at: string; finished_at: string | null; lease_until: string; error_code: string | null; results: { source_id: string; status: string; added?: number; duplicates?: number; more?: boolean; error_code?: string }[] }
-export type Origin = { id: string; job_id: string; source_id: string; source_url: string | null; message_id: string | null; sender: string | null; source_date: string | null }
+export type Origin = { id: string; job_id: string; source_id: string; source_url: string | null; message_id: string | null; sender: string | null; source_date: string | null; provider?: string; direct_url?: string | null; parsing_confidence?: string }
 export type Review = { job_id: string; disposition: 'new' | 'saved' | 'dismissed'; reviewed: boolean }
 export type GmailConnection = { status: 'connected' | 'disconnected' | 'reconnect_required'; expected_email: string; connected_email: string | null; checked_at: string | null; error_code: string | null; granted_scopes?: string[]; send_consented_at?: string | null }
-export type Discovery = { connection: GmailConnection | null; sources: Source[]; runs: ImportRun[]; jobs: Job[]; origins: Origin[]; reviews: Review[]; more: boolean; automation?: Automation | null; automationRuns?: AutomationRun[]; scheduledResults?: ImportRun[] }
+export type Discovery = { connection: GmailConnection | null; sources: Source[]; runs: ImportRun[]; jobs: Job[]; origins: Origin[]; reviews: Review[]; more: boolean; automation?: Automation | null; automationRuns?: AutomationRun[]; scheduledResults?: ImportRun[]; searchProfiles?: SearchProfile[]; adzunaStatus?: string }
 export const errorMessages: Record<string, string> = {
+  not_configured: 'Not configured. An administrator must add the Adzuna Edge secrets; other sources continue normally.',
+  no_search_profiles: 'Enable a search profile before testing or importing from Adzuna.',
+  invalid_search_profile: 'Check the profile name, titles, list lengths, salary, experience, and result limit (1–50).',
+  invalid_cursor: 'This source checkpoint is invalid. Remove and add the source again to restart.',
   label_confirmation_required: 'Confirm your Gmail label again in Settings for the current mailbox.',
   automation_paused: 'Automation was paused. Enable it to continue at the next scheduled check.',
   source_paused: 'This source was paused or changed. Review it in Settings before continuing.',
@@ -40,7 +45,7 @@ export const errorMessages: Record<string, string> = {
   permission_denied: 'Google denied this request. Check that Gmail API is enabled and read-only consent is granted, then retry.',
   source_not_found: 'The configured label or board no longer exists. Check it in Settings.',
   invalid_label: 'Choose an existing custom Gmail label. Create JobPilot/Alerts in Gmail if needed.',
-  invalid_source: 'Enter a Greenhouse board token using letters, digits, underscores, or hyphens.',
+  invalid_source: 'Choose a supported source and enter a board identifier using letters, digits, underscores, or hyphens.',
   invalid_email: 'Enter the Gmail address you intend to connect.',
   invalid_job: 'Add a valid http(s) URL or a description of up to 50,000 characters.',
   rate_limited: 'The provider is rate limiting requests. Wait before refreshing again.',
@@ -83,7 +88,7 @@ async function rows<T>(client: SupabaseClient, table: string, limit = Infinity):
   return result
 }
 export async function loadDiscovery(client: SupabaseClient, limit = 100): Promise<Discovery> {
-  const [connection, sources, runs, jobs, origins, reviews, automation, automationRuns, scheduledResults] = await Promise.all([
+  const [connection, sources, runs, jobs, origins, reviews, automation, automationRuns, scheduledResults, searchProfiles] = await Promise.all([
     client.from('gmail_connections').select('status,expected_email,connected_email,checked_at,error_code,granted_scopes,send_consented_at').maybeSingle(),
     rows<Source>(client, 'job_sources'),
     client.from('import_runs').select('*').order('started_at', { ascending: false }).limit(20),
@@ -91,9 +96,10 @@ export async function loadDiscovery(client: SupabaseClient, limit = 100): Promis
     client.from('discovery_automation').select('*').maybeSingle(),
     client.from('automation_runs').select('*').order('started_at', { ascending: false }).limit(20),
     rows<ImportRun>(client, 'latest_scheduled_imports'),
+    rows<SearchProfile>(client, 'search_profiles'),
   ])
   if (connection.error || runs.error || automation.error || automationRuns.error) throw new WorkspaceError('Could not load job discovery. Check your connection and the Phase 5 backend setup, then refresh.')
-  return { connection: connection.data, sources, runs: runs.data ?? [], jobs: jobs.slice(0, limit), origins, reviews, more: jobs.length > limit, automation: automation.data, automationRuns: automationRuns.data ?? [], scheduledResults }
+  return { connection: connection.data, sources, runs: runs.data ?? [], jobs: jobs.slice(0, limit), origins, reviews, more: jobs.length > limit, automation: automation.data, automationRuns: automationRuns.data ?? [], scheduledResults, searchProfiles }
 }
 export async function saveReview(client: SupabaseClient, owner: string, job: string, disposition: Review['disposition'], reviewed: boolean) {
   requireOnline()

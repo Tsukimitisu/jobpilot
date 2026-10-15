@@ -1,9 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { applicationAction } from './applications.ts'
-import { canonicalUrl, greenhouseCandidate, manualCandidate, parseAlert, plainText, validDate } from './discovery.ts'
-import { authorizationUrl, decryptToken, encryptToken, fetchJson, gmailGet, gmailSendScope, googleTokens, hash, messageText, randomSecret, ServiceError, verifyGmailIdentity, type GmailPart, type GoogleConfig } from './google.ts'
+import { canonicalUrl, manualCandidate, validDate, type Candidate } from './discovery.ts'
+import { parseJobAlert } from './alerts.ts'
+import { connectorPage, discoveryTransport, ProviderError, adzunaMarkets, type AdzunaConfig } from './connectors.ts'
+import { scoreSearch, validSearchProfile, type SearchProfile } from './search.ts'
+import { authorizationUrl, decryptToken, encryptToken, gmailGet, gmailSendScope, googleTokens, hash, messageText, randomSecret, ServiceError, verifyGmailIdentity, type GmailPart, type GoogleConfig } from './google.ts'
 
-export type BackendConfig = { appOrigin: string; google: GoogleConfig }
+export type BackendConfig = { appOrigin: string; google: GoogleConfig; adzuna?: AdzunaConfig }
 type Connection = { owner_id: string; expected_email: string; generation: string; status: string; granted_scopes?: string[]; send_consented_at?: string | null }
 type Source = { id: string; owner_id: string; kind: string; source_key: string; name: string; cursor: string | null; enabled: boolean; confirmed_email: string | null }
 export const safeCode = (error: unknown) => error instanceof ServiceError ? error.code : 'request_failed'
@@ -79,14 +82,15 @@ async function store(db: SupabaseClient, owner: string, source: string, external
   return await rpc(db, 'store_job_candidate', { p_owner: owner, p_source: source, p_external: external, p_job: job, p_origin: origin }) === true
 }
 export async function importSource(db: SupabaseClient, owner: string, sourceId: string, config: GoogleConfig, transport: typeof fetch = fetch,
-  scheduled?: { runId: string; deadline: number; guard: () => Promise<void> }) {
+  scheduled?: { runId: string; deadline: number; guard: () => Promise<void> }, adzuna?: AdzunaConfig, workDeadline = Infinity) {
   const run = scheduled
     ? await rpc(db, 'start_scheduled_import', { p_run: scheduled.runId, p_source: sourceId })
     : await rpc(db, 'start_job_import', { p_owner: owner, p_source: sourceId })
   let source: Source | null = null
   let gmailConnection: Connection | null = null
   let added = 0, duplicates = 0, cursor: string | null = null
-  const deadline = Math.min(Date.now() + 90000, scheduled?.deadline ?? Infinity)
+  let profiles: SearchProfile[] = []
+  const deadline = Math.min(Date.now() + 90000, scheduled?.deadline ?? Infinity, workDeadline)
   const guard = async () => {
     if (Date.now() >= deadline) throw new ServiceError('interrupted')
     await scheduled?.guard()
@@ -94,24 +98,39 @@ export async function importSource(db: SupabaseClient, owner: string, sourceId: 
     if (!current?.enabled || (source && current.source_key !== source.source_key)) throw new ServiceError('source_paused')
     if (Date.now() >= deadline) throw new ServiceError('interrupted')
   }
-  const provider: typeof fetch = async (input, init) => { await guard(); return transport(input, init) }
-  const save = async (external: string, job: unknown, origin: unknown) => {
+  const provider: typeof fetch = discoveryTransport(async (input, init) => {
     await guard()
-    return await rpc(db, 'store_import_candidate', { p_owner: owner, p_run: run.id, p_external: external, p_job: job, p_origin: origin }) === true
+    if (await rpc(db,'source_provider_ready',{p_owner:owner,p_source:sourceId})===false) throw new ServiceError('rate_limited')
+    return transport(input, init)
+  })
+  const save = async (external: string, job: Candidate, origin: unknown, checkpoint: string | null) => {
+    await guard()
+    const fresh=await rpc(db, 'store_import_candidate', { p_owner: owner, p_run: run.id, p_external: external, p_job: { ...job, profile_matches: profiles.map(p => scoreSearch(job,p)) }, p_origin: origin }) === true
+    await rpc(db,'checkpoint_import',{p_owner:owner,p_run:run.id,p_cursor:checkpoint})
+    return fresh
   }
   try {
     source = checked(await db.from('job_sources').select('*').eq('id', sourceId).eq('owner_id', owner).single())
     if (!source) throw new ServiceError('invalid_source')
+    const profileRows = checked(await db.from('search_profiles').select('*').eq('owner_id',owner).eq('enabled',true))
+    profiles = Array.isArray(profileRows) ? profileRows : []
+    const limit = profiles.length ? Math.min(...profiles.map(p=>p.results_limit)) : 50
     if (source.kind === 'gmail') {
       gmailConnection = await connection(db, owner)
       if (source.confirmed_email !== gmailConnection.expected_email) throw new ServiceError('label_confirmation_required')
       const token = await gmailAccess(db, owner, config, provider)
       if ((await connection(db, owner)).generation !== gmailConnection.generation) throw new ServiceError('interrupted')
       const params = new URLSearchParams({ labelIds: source.source_key, maxResults: '10', includeSpamTrash: 'false' })
-      if (source.cursor) params.set('pageToken', source.cursor)
+      let checkpoint = { token: source.cursor ?? '', message: 0, job: 0 }
+      if (source.cursor?.startsWith('{')) {
+        try { checkpoint=JSON.parse(source.cursor) } catch { throw new ServiceError('invalid_cursor') }
+      }
+      if (checkpoint.token) params.set('pageToken', checkpoint.token)
       const page = await gmailGet(`messages?${params}`, token, provider)
       cursor = typeof page.nextPageToken === 'string' ? page.nextPageToken : null
-      for (const item of (Array.isArray(page.messages) ? page.messages.slice(0, 10) : []) as { id: string }[]) {
+      const messages=(Array.isArray(page.messages) ? page.messages.slice(0, 10) : []) as { id: string }[]
+      outer: for (let messageIndex=checkpoint.message;messageIndex<messages.length;messageIndex++) {
+        const item=messages[messageIndex]
         if (Date.now() > deadline) throw new ServiceError('interrupted')
         if ((await connection(db, owner)).generation !== gmailConnection.generation) throw new ServiceError('interrupted')
         const message = await gmailGet(`messages/${encodeURIComponent(item.id)}?format=full`, token, provider)
@@ -119,30 +138,24 @@ export async function importSource(db: SupabaseClient, owner: string, sourceId: 
         const payload = (message.payload ?? {}) as GmailPart
         const sender = payload.headers?.find(header => header.name.toLowerCase() === 'from')?.value.slice(0, 1000) ?? null
         const sourceDate = validDate(Number(message.internalDate))
-        const jobs = parseAlert(messageText(payload))
-        for (const job of jobs) {
+        const jobs = parseJobAlert(messageText(payload), sender)
+        for (let jobIndex=messageIndex===checkpoint.message ? checkpoint.job : 0;jobIndex<jobs.length;jobIndex++) {
+          if (added+duplicates>=limit) { cursor=JSON.stringify({token:checkpoint.token,message:messageIndex,job:jobIndex}); break outer }
+          const job=jobs[jobIndex]
           const fresh = await save(`${item.id}:${job.canonical_url ?? 'review'}`, job, {
             message_id: item.id, sender, source_date: sourceDate,
             source_url: `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(gmailConnection.expected_email)}#all/${encodeURIComponent(item.id)}`,
-          })
+          },JSON.stringify({token:checkpoint.token,message:messageIndex,job:jobIndex+1}))
           if (fresh) added++; else duplicates++
         }
       }
-    } else if (source.kind === 'greenhouse') {
-      if (!/^[a-zA-Z0-9_-]{1,100}$/.test(source.source_key)) throw new ServiceError('invalid_source')
-      const base = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(source.source_key)}`
-      const [board, page] = await Promise.all([fetchJson(base, {}, provider), fetchJson(`${base}/jobs?content=true`, {}, provider)])
-      if (!Array.isArray(page.jobs)) throw new ServiceError('provider_unavailable')
-      const company = typeof board.name === 'string' ? plainText(board.name).slice(0, 500) : null
-      const jobs = page.jobs.filter(job => Number.isSafeInteger(job.id)).sort((a, b) => a.id - b.id)
-      const after = source.cursor
-      const remaining = jobs.filter(job => !after || job.id > Number(after))
-      const batch = remaining.slice(0, 50)
-      cursor = remaining.length > batch.length ? String(batch.at(-1).id) : null
-      for (const item of batch) {
+    } else if (['greenhouse','lever','ashby','adzuna'].includes(source.kind)) {
+      const page = await connectorPage(source,limit,profiles,adzuna,provider)
+      cursor = page.cursor
+      for (const item of page.jobs) {
         if (Date.now() > deadline) throw new ServiceError('interrupted')
-        const job = greenhouseCandidate(item, company)
-        const fresh = await save(String(item.id), job, { source_date: job.published_at, source_url: job.canonical_url })
+        const job = item.job
+        const fresh = await save(item.external, job, { source_date: job.published_at, source_url: job.canonical_url },item.checkpoint??null)
         if (fresh) added++; else duplicates++
       }
     } else throw new ServiceError('invalid_source')
@@ -151,6 +164,8 @@ export async function importSource(db: SupabaseClient, owner: string, sourceId: 
     return { added, duplicates, more: !!cursor }
   } catch (error) {
     if (gmailConnection && safeCode(error) === 'reconnect_required') await markConnection(db, gmailConnection, 'reconnect_required')
+    if (safeCode(error)==='rate_limited' || error instanceof ProviderError && error.retryAt) await rpc(db,'provider_backoff',{p_owner:owner,p_run:run.id,p_retry_at:error instanceof ProviderError?error.retryAt:null})
+    await rpc(db,'source_backoff',{ p_owner:owner,p_run:run.id,p_retry_at:error instanceof ProviderError ? error.retryAt : null })
     await rpc(db, 'finish_job_import', { p_owner: owner, p_run: run.id, p_error: safeCode(error), p_cursor: null, p_added: added, p_duplicates: duplicates })
     throw error
   }
@@ -158,6 +173,80 @@ export async function importSource(db: SupabaseClient, owner: string, sourceId: 
 export async function apiAction(db: SupabaseClient, owner: string, input: Record<string, unknown>, config: BackendConfig, transport: typeof fetch = fetch): Promise<unknown> {
   if (typeof input.action === 'string' && input.action.startsWith('application_')) return applicationAction(db, owner, input, () => gmailAccess(db, owner, config.google, transport, true), transport)
   switch (input.action) {
+    case 'run_discovery': {
+      const claim=await rpc(db,'claim_manual_discovery',{p_owner:owner})
+      if (!claim) throw new ServiceError('import_busy')
+      const results: {source_id:string;added?:number;duplicates?:number;error?:string}[]=[]
+      const deadline=Date.now()+100000
+      let requests=0
+      const bounded: typeof fetch=async (url,init)=>{
+        if (++requests>40 || Date.now()>=deadline) throw new ServiceError('interrupted')
+        return transport(url,{...init,signal:AbortSignal.any([init?.signal ?? new AbortController().signal,AbortSignal.timeout(Math.max(1,deadline-Date.now()))])})
+      }
+      try {
+        for (const id of claim.sources as string[]) {
+          if (Date.now()>=deadline) break
+          try { results.push({source_id:id,...await importSource(db,owner,id,config.google,bounded,undefined,config.adzuna,deadline)}) }
+          catch(error) { results.push({source_id:id,error:safeCode(error)}) }
+        }
+        return {results}
+      } finally { await rpc(db,'finish_manual_discovery',{p_owner:owner,p_id:claim.id}) }
+    }
+    case 'discovery_configuration': return { adzuna: config.adzuna?.appId && config.adzuna.appKey ? 'Configured' : 'Not configured' }
+    case 'save_search_profile': {
+      if (!validSearchProfile(input.profile)) throw new ServiceError('invalid_search_profile')
+      const { id, ...profile } = input.profile
+      // Whitelist fields; do not let an authenticated request assign owner_id or metadata.
+      const values = Object.fromEntries(['name','desired_titles','alternative_titles','required_keywords','excluded_keywords','locations','work_modes','employment_types','max_experience','minimum_salary','results_limit','enabled'].map(k=>[k,profile[k as keyof typeof profile]]))
+      if (id) checked(await db.from('search_profiles').update(values).eq('owner_id',owner).eq('id',id).select('id').single())
+      else checked(await db.from('search_profiles').insert({...values,owner_id:owner}))
+      return {ok:true}
+    }
+    case 'delete_search_profile': {
+      if (typeof input.id !== 'string') throw new ServiceError('invalid_search_profile')
+      checked(await db.from('search_profiles').delete().eq('owner_id',owner).eq('id',input.id))
+      return {ok:true}
+    }
+    case 'add_source': {
+      const kind=String(input.kind), board=typeof input.board==='string' ? input.board.trim() : ''
+      if (!['greenhouse','lever','ashby','adzuna'].includes(kind) || (kind==='adzuna' ? !adzunaMarkets.includes(board) : !/^[a-zA-Z0-9_-]{1,100}$/.test(board))) throw new ServiceError('invalid_source')
+      checked(await db.from('job_sources').upsert({owner_id:owner,kind,source_key:board,name:`${kind}: ${board}`,enabled:false,removed_at:null,cursor:null},{onConflict:'owner_id,kind,source_key'}))
+      return {ok:true}
+    }
+    case 'remove_source': {
+      if (typeof input.sourceId!=='string') throw new ServiceError('invalid_source')
+      await rpc(db,'remove_discovery_source',{p_owner:owner,p_source:input.sourceId}); return {ok:true}
+    }
+    case 'test_source': {
+      if (typeof input.sourceId!=='string') throw new ServiceError('invalid_source')
+      const run=await rpc(db,'claim_source_test',{p_owner:owner,p_source:input.sourceId})
+      try {
+        const testDeadline=Date.now()+40000
+        const testTransport:typeof fetch=discoveryTransport(async(url,init)=>{
+          if(Date.now()>=testDeadline)throw new ServiceError('interrupted')
+          if(await rpc(db,'source_provider_ready',{p_owner:owner,p_source:input.sourceId})===false)throw new ServiceError('rate_limited')
+          return transport(url,{...init,signal:AbortSignal.any([init?.signal??new AbortController().signal,AbortSignal.timeout(Math.max(1,testDeadline-Date.now()))])})
+        })
+        const source=checked(await db.from('job_sources').select('*').eq('owner_id',owner).eq('id',input.sourceId).single())
+        let preview: unknown
+        if (source.kind==='gmail') {
+          const available=await labels(db,owner,config.google,testTransport)
+          if (!available.some(v=>v.id===source.source_key)) throw new ServiceError('invalid_label')
+          preview={company:null,titles:[],board:source.name}
+        } else {
+          const profiles=checked(await db.from('search_profiles').select('*').eq('owner_id',owner).eq('enabled',true)) ?? []
+          const page=await connectorPage({...source,cursor:null},3,profiles,config.adzuna,testTransport)
+          preview={company:page.company,titles:page.jobs.map(j=>j.job.title),board:source.source_key}
+        }
+        await rpc(db,'finish_source_test',{p_owner:owner,p_run:run.id,p_error:null})
+        return preview
+      } catch(error) {
+        if (safeCode(error)==='rate_limited' || error instanceof ProviderError && error.retryAt) await rpc(db,'provider_backoff',{p_owner:owner,p_run:run.id,p_retry_at:error instanceof ProviderError?error.retryAt:null})
+        await rpc(db,'source_backoff',{p_owner:owner,p_run:run.id,p_retry_at:error instanceof ProviderError ? error.retryAt : null})
+        await rpc(db,'finish_source_test',{p_owner:owner,p_run:run.id,p_error:safeCode(error)})
+        throw error
+      }
+    }
     case 'set_automation': {
       if (typeof input.enabled !== 'boolean') throw new ServiceError('invalid_action')
       await rpc(db, 'set_discovery_automation', { p_owner: owner, p_enabled: input.enabled })
@@ -178,13 +267,14 @@ export async function apiAction(db: SupabaseClient, owner: string, input: Record
     case 'add_greenhouse': {
       const board = typeof input.board === 'string' ? input.board.trim() : ''
       if (!/^[a-zA-Z0-9_-]{1,100}$/.test(board)) throw new ServiceError('invalid_source')
-      checked(await db.from('job_sources').upsert({ owner_id: owner, kind: 'greenhouse', source_key: board, name: board, enabled: true }, { onConflict: 'owner_id,kind,source_key' }))
+      checked(await db.from('job_sources').upsert({ owner_id: owner, kind: 'greenhouse', source_key: board, name: board, enabled: false }, { onConflict: 'owner_id,kind,source_key' }))
       return { ok: true }
     }
     case 'toggle_source': {
       if (typeof input.enabled !== 'boolean' || typeof input.sourceId !== 'string') throw new ServiceError('invalid_source')
       if (input.enabled) {
         const source = checked(await db.from('job_sources').select('*').eq('owner_id', owner).eq('id', input.sourceId).single())
+        if (source.removed_at) throw new ServiceError('invalid_source')
         if (source.kind === 'gmail' && source.confirmed_email !== (await connection(db, owner)).expected_email) throw new ServiceError('label_confirmation_required')
       }
       checked(await db.from('job_sources').update({ enabled: input.enabled }).eq('owner_id', owner).eq('id', input.sourceId))
@@ -192,7 +282,7 @@ export async function apiAction(db: SupabaseClient, owner: string, input: Record
     }
     case 'import': {
       if (typeof input.sourceId !== 'string') throw new ServiceError('invalid_source')
-      return importSource(db, owner, input.sourceId, config.google, transport)
+      return importSource(db, owner, input.sourceId, config.google, transport, undefined, config.adzuna)
     }
     case 'manual': {
       for (const field of ['url', 'description', 'title', 'company', 'location', 'work_mode']) if (input[field] !== undefined && typeof input[field] !== 'string') throw new ServiceError('invalid_job')

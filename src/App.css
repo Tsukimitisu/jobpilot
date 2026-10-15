@@ -39,6 +39,8 @@ details > p, details > ul { margin-block: 12px; }
 .form-grid { display: grid; gap: 0 24px; }
 .form-grid > *, .field { min-width: 0; }
 .choices { border: 0; padding: 0; margin: 0 0 28px; min-width: 0; }
+fieldset.choice-list { min-width: 0; border: 0; padding: 0; margin-bottom: 24px; }
+fieldset.choice-list legend { font-weight: 600; }
 .choices legend { font-weight: 600; }
 .choice-list { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 8px; }
 .choice-list label { display: flex; align-items: center; gap: 10px; min-height: 48px; cursor: pointer; }

@@ -26,3 +26,5 @@ artifacts/
 supabase/.temp/
 supabase/.branches/
 .env.scheduler.local
+supabase/functions/phase4-fixture/
+supabase/functions/phase5-fixture/

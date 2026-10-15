@@ -169,3 +169,28 @@ Screenshots `artifacts/automation-390.png`, `artifacts/automation-1440.png`, and
 findings. Independent finish review: ship, after resolving and recapturing the
 stale-notice issue. These checks do not establish actual phone installation,
 Safari, screen-reader behavior, live Gmail, or hosted scheduler operation.
+
+
+## Phase 6 extension and verification
+
+Search profiles and source health reuse the existing light, green, plain-CSS
+Settings layout, visible labels, focus treatment, wrapping actions, and mobile
+navigation. Native fieldsets group work-mode and employment choices; form fields
+retain mobile-width constraints. Search profile drafts stay in component memory.
+Source previews identify the board and show unknown company where the API omits it.
+Adzuna configuration status exposes no credentials and explains the absent Philippine
+market. Unknown job information and low parsing confidence remain visible in Jobs.
+
+Source health distinguishes attempted checks from successful imports, explains
+progress without raw cursors, and shows counts, cooldowns, and safe error messages.
+Test/import/run actions disable during work and offline, backed by server locks.
+Profile actions have explicit accessible names including the profile name.
+
+Headless Edge with mocked Supabase checks profile creation, source preview, missing
+Adzuna configuration, public-only PWA caches, existing Phase 4/5 workflows, and
+layouts at 360/375/390/768/1024/1440px plus 932×360 landscape. Settings captures at
+390px and 1440px were visually inspected. The Impeccable audit found existing
+palette-documentation advisories and no changed-TSX detector issues. Existing colors
+were retained. Browser checks do not establish actual phone installation, Safari,
+screen-reader behavior, live provider responses, or hosted scheduler operation.
+See PHASE6.md for acceptance and verification boundaries.

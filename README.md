@@ -1,4 +1,4 @@
-# JobPilot — Phase 5
+# JobPilot — Phase 6
 
 Personal, single-owner job-search workspace using React, TypeScript, Vite,
 Supabase Auth/Postgres/private Storage, Vercel, and vite-plugin-pwa.
@@ -11,6 +11,13 @@ tracking for applications sent elsewhere. Phase 5 adds owner-controlled hourly
 discovery through Supabase Cron, OFF by default, with Philippine-time status and
 automatic dashboard refresh. AI, website submission, automatic sending, offline
 background sync, and follow-ups remain unavailable.
+
+**For an existing Phase 5 installation, follow [the Phase 6 rollout guide](PHASE6.md).**
+It adds search profiles, conservative Gmail alert parsing, public Lever/Ashby boards,
+optional Adzuna, cross-source provenance and deduplication, and source health through
+the existing hourly scheduler. New sources start disabled. The guide includes
+limitations, local verification, exact hosted rollout order, monitoring, and rollback.
+No deployment, hosted change, Cron configuration, or live provider call was performed.
 
 **For an existing Phase 4 installation, follow [the Phase 5 rollout guide](PHASE5.md).**
 It covers the additive migration, dedicated scheduler secret, Vault, administrator-run

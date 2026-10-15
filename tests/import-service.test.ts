@@ -9,10 +9,12 @@ async function backend(kind = 'gmail') {
   const config: GoogleConfig = { clientId: 'fixture', clientSecret: 'inert-secret', redirectUri: 'https://example.invalid/callback', encryptionKey: randomSecret() }
   const connection = { owner_id: 'owner', generation: 'g', status: 'connected', expected_email: 'owner@example.invalid' }
   const credential = { generation: 'g', encrypted_refresh_token: await encryptToken('inert-refresh', 'owner', config.encryptionKey) }
-  const source = { id: 'source', owner_id: 'owner', kind, source_key: kind === 'gmail' ? 'Label_fixture' : 'fixture', cursor: null, enabled: true, confirmed_email: 'owner@example.invalid' }
+  const source = { id: 'source', owner_id: 'owner', kind, source_key: kind === 'gmail' ? 'Label_fixture' : 'fixture', cursor: null as string|null, enabled: true, confirmed_email: 'owner@example.invalid' }
   const stored = new Map<string, unknown>()
   const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
     if (name === 'start_job_import') return { data: { id: 'run' }, error: null }
+    if (name === 'checkpoint_import')source.cursor=args.p_cursor as string|null
+    if (name === 'finish_job_import' && !args.p_error)source.cursor=args.p_cursor as string|null
     if (name === 'store_import_candidate') {
       const key = args.p_external as string, fresh = !stored.has(key)
       if (fresh) stored.set(key, args)
@@ -37,6 +39,19 @@ beforeEach(() => { vi.stubGlobal('crypto', webcrypto); vi.stubGlobal('fetch', vi
 afterEach(() => vi.unstubAllGlobals())
 
 describe('fixture-only imports and credential lifecycle', () => {
+  it('resumes after the last committed candidate when an import fails mid-page',async()=>{
+    const api=await backend('greenhouse'), original=api.rpc.getMockImplementation()!
+    let fail=true
+    api.rpc.mockImplementation(async(name,args)=>{
+      if(name==='store_import_candidate' && args.p_external==='2' && fail){fail=false;return {data:null,error:{message:'synthetic database failure'}}}
+      return original(name,args)
+    })
+    const transport=vi.fn(async(input)=>String(input).endsWith('content=true')?json({jobs:[1,2,3].map(id=>({id,title:`Job ${id}`,content:'Fixture',absolute_url:`https://example.invalid/${id}`}))}):json({name:'Fixture'}))
+    await expect(importSource(api.db,'owner','source',api.config,transport)).rejects.toThrow('database_error')
+    expect(api.source.cursor).toBe('1');expect(api.stored.size).toBe(1)
+    expect(await importSource(api.db,'owner','source',api.config,transport)).toMatchObject({added:2,duplicates:0,more:false})
+    expect(api.source.cursor).toBeNull();expect(api.stored.size).toBe(3)
+  })
   it('reads only the selected Gmail label, skips moved messages, preserves provenance, and repeats safely', async () => {
     const api = await backend()
     const transport = vi.fn(async (input: string | URL | Request) => {

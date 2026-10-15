@@ -59,6 +59,7 @@ try {
   let automation = null
   let automationRuns = []
   let importRuns = []
+  let searchProfiles = []
   const sources = [{ id: 'source-fixture', kind: 'gmail', source_key: 'Label_fixture', name: 'JobPilot/Alerts', enabled: true, cursor: null, last_success_at: '2026-01-01T00:00:00Z' }]
   const jobs = [{ id: 'job-fixture', owner_id: owner, title: 'Frontend Engineer', company: 'Fixture Company', location: null, work_mode: null, canonical_url: 'https://example.invalid/jobs/42', description: 'Inert browser fixture. No real mailbox content.', requirements: ['React', 'TypeScript'], uncertainty: ['Location and work mode unknown. Verify the source.'], published_at: null, created_at: '2026-01-01T00:00:00Z' }]
   const reviews = [{ job_id: 'job-fixture', owner_id: owner, disposition: 'new', reviewed: false }]
@@ -78,6 +79,7 @@ try {
       body = profile ? (request.headers.Accept?.includes('object') || request.headers.accept?.includes('object') ? profile : [profile]) : []
     } else if (url.pathname === '/rest/v1/gmail_connections') body = gmail ? [gmail] : []
     else if (url.pathname === '/rest/v1/job_sources') body = sources
+    else if (url.pathname === '/rest/v1/search_profiles') body = searchProfiles
     else if (url.pathname === '/rest/v1/imported_jobs') body = jobs
     else if (url.pathname === '/rest/v1/import_runs') body = importRuns
     else if (url.pathname === '/rest/v1/latest_scheduled_imports') body = importRuns
@@ -91,6 +93,11 @@ try {
     } else if (url.pathname === '/functions/v1/jobpilot-api') {
       const input = JSON.parse(request.postData)
       if (input.action === 'labels') body = { labels: [{ id: 'Label_fixture', name: 'JobPilot/Alerts' }] }
+      else if (input.action === 'discovery_configuration') body = {adzuna:'Not configured'}
+      else if (input.action === 'save_search_profile') {searchProfiles=[{...input.profile,id:'profile-fixture'}];body={ok:true}}
+      else if (input.action === 'add_source') {sources.push({id:'lever-fixture',kind:input.kind,source_key:input.board,name:`${input.kind}: ${input.board}`,enabled:false,cursor:'2',last_attempted_at:'2026-01-01T00:00:00Z',last_success_at:null,last_added:2,last_duplicates:1});body={ok:true}}
+      else if (input.action === 'test_source') body={board:'fixture',company:null,titles:['Public fixture role']}
+      else if (input.action === 'run_discovery') body={results:[]}
       else if (input.action === 'set_automation') { automation = { enabled: input.enabled, next_run_at: input.enabled ? new Date((Math.floor(Date.now() / 3600000) + 1) * 3600000).toISOString() : null }; body = { ok: true } }
       else if (input.action === 'check_gmail' && rejectGmail) { gmail.status = 'reconnect_required'; gmail.error_code = 'reconnect_required'; status = 400; body = { error: 'reconnect_required' } }
       else if (input.action === 'disconnect') { gmail = { expected_email: user.email, status: 'disconnected' }; body = { ok: true } }
@@ -172,6 +179,23 @@ try {
   gmail = { status: 'connected', expected_email: user.email, connected_email: user.email, checked_at: '2026-01-01T00:00:00Z', error_code: null }
   await clickText('Refresh source status')
   await waitFor(`!![...document.querySelectorAll('.badge')].find(e => e.textContent === 'Connected')`)
+  await evaluate(`[...document.querySelectorAll('summary')].find(e=>e.textContent==='Add search profile').click()`)
+  await fill('search-profile-name','Cebu entry roles')
+  await fill('search-desired_titles','Junior Developer, QA Engineer')
+  await fill('search-locations','Cebu, Metro Manila')
+  await clickText('Save search profile')
+  await waitFor(`document.body.textContent.includes('Search profile saved.')`)
+  assert.equal(searchProfiles[0].enabled,false,'search profile defaults disabled')
+  await evaluate(`document.querySelector('#source-kind').value='lever';document.querySelector('#source-kind').dispatchEvent(new Event('change',{bubbles:true}))`)
+  await fill('greenhouse-board','fixture')
+  await clickText('Add disabled source')
+  await waitFor(`document.body.textContent.includes('lever: fixture')`)
+  assert.equal(sources.at(-1).enabled,false,'new board defaults disabled')
+  await waitFor(`!![...document.querySelectorAll('button')].find(e=>e.textContent==='Test source lever: fixture'&&!e.disabled)`)
+  await clickText('Test source lever: fixture')
+  await waitFor(`document.body.textContent.includes('Public fixture role')`)
+  await evaluate(`document.querySelector('#source-kind').value='adzuna';document.querySelector('#source-kind').dispatchEvent(new Event('change',{bubbles:true}))`)
+  assert.ok(await evaluate(`document.body.textContent.includes('Adzuna: Not configured')`))
   await clickText('Load Gmail labels')
   await waitFor(`!!document.querySelector('#gmail-label')`)
   await clickText('Confirm label')
@@ -213,6 +237,7 @@ try {
   for (const route of ['settings', 'jobs']) {
     await evaluate(`document.querySelector('a[href="/${route}"]').click()`)
     await waitFor(route === 'jobs' ? `!!document.querySelector('.job-item')` : `!!document.querySelector('#gmail-address')`)
+    if(route==='settings')await evaluate(`document.querySelector('#search-profiles-heading').parentElement.querySelector('details').open=true`)
     for (const [width, height] of [[360, 800], [375, 812], [390, 844], [768, 1024], [1024, 768], [1440, 1000], [932, 360]]) {
       await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 900 })
       await send('Emulation.setTouchEmulationEnabled', { enabled: width < 900 })
@@ -284,7 +309,7 @@ try {
   const storageKeys = await evaluate('Object.keys(localStorage)')
   assert.ok(storageKeys.every(key => key.startsWith('sb-') && key.endsWith('-auth-token')), 'non-session browser persistence found')
   assert.deepEqual(consoleErrors, [])
-  console.log(`Real headless Edge PASS with mocked Supabase: login, profile save/reload, offline drafts, job save/dismiss, label confirmation, Gmail states, automation off/enable/pause/PHT/errors, dashboard automatic refresh, application draft/review/explicit confirmation/duplicate taps/statuses, layouts at 360/375/390/768/1024/1440 and landscape, ${caches.length} public cache entries, session-only localStorage. Screenshots: artifacts/. No phone installation or live Gmail/hosted checks.`)
+  console.log(`Real headless Edge PASS with mocked Supabase: login, profile save/reload, offline drafts, job save/dismiss, search profiles, disabled public sources/previews/Adzuna configuration, label confirmation, Gmail states, automation off/enable/pause/PHT/errors, dashboard automatic refresh, application draft/review/explicit confirmation/duplicate taps/statuses, layouts at 360/375/390/768/1024/1440 and landscape, ${caches.length} public cache entries, session-only localStorage. Screenshots: artifacts/. No phone installation or live Gmail/hosted checks.`)
   await send('Browser.close').catch(() => {})
 } finally {
   socket?.close()

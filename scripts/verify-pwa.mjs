@@ -24,7 +24,11 @@ for (const entry of precache) {
   assert.ok(!entry.url.includes('?') && !entry.url.includes('supabase'), 'only public build assets')
 }
 const allowed = routes[0].options.allowlist
-for (const path of ['/rest/v1/owner_profiles', '/rest/v1/imported_jobs', '/functions/v1/jobpilot-api', '/functions/v1/gmail-callback?code=private', '/storage/v1/object/resumes/test.pdf', '/auth/v1/user', '/profile?token=private', '/settings?gmail=connected', '/resumes/file.pdf']) assert.ok(!allowed.some(regex => regex.test(path)), `must not intercept ${path}`)
+for (const path of ['/rest/v1/owner_profiles', '/rest/v1/imported_jobs', '/rest/v1/search_profiles', '/rest/v1/job_origins', '/rest/v1/job_sources', '/functions/v1/discovery-scheduler', '/functions/v1/jobpilot-api', '/functions/v1/gmail-callback?code=private', '/storage/v1/object/resumes/test.pdf', '/auth/v1/user', '/profile?token=private', '/settings?gmail=connected', '/resumes/file.pdf']) assert.ok(!allowed.some(regex => regex.test(path)), `must not intercept ${path}`)
+for (const entry of precache.filter(item=>item.url.endsWith('.js'))) {
+  const script=await readFile(new URL(`../dist/${entry.url}`,import.meta.url),'utf8')
+  assert.ok(!/ADZUNA_APP_ID|ADZUNA_APP_KEY|inert-fixture-key|GMAIL_TOKEN_ENCRYPTION_KEY/.test(script),'backend credential configuration must not enter frontend bundle')
+}
 for (const path of ['/dashboard', '/profile', '/resumes', '/login', '/jobs', '/settings']) assert.ok(allowed.some(regex => regex.test(path)))
 assert.equal(manifest.name, 'JobPilot')
 assert.equal(manifest.display, 'standalone')
