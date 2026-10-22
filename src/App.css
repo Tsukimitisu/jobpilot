@@ -179,7 +179,7 @@ input,
 select,
 textarea {
   min-height: 44px;
-  paddin: 10px 14px;
+  padding: 10px 14px;
   border: 1px solid #b8c9bf;
   border-radius: 12px;
   background: #ffffff;
