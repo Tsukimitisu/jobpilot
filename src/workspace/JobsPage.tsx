@@ -11,7 +11,7 @@ import { DiscoveryStatus, SourceList } from './DiscoveryStatus'
 
 const emptyEntry = { url: '', description: '', title: '', company: '', location: '', work_mode: '' }
 export function JobsPage() {
-  return <><header className="page-heading"><h1>Jobs</h1><p>Discover opportunities, understand the fit, and decide what to keep.</p></header><OwnerContent><JobsContent /></OwnerContent></>
+  return <><header className="page-heading"><h1>My Jobs Matches</h1><p>Review Jobs automatically discovered for your search profiles</p></header><OwnerContent><JobsContent /></OwnerContent></>
 }
 function JobsContent() {
   const navigate = useNavigate()

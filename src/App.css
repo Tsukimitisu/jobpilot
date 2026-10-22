@@ -153,3 +153,48 @@ a:active { text-decoration: underline; }
 .email-review { margin-top: 24px; }
 .email-body { white-space: pre-wrap; overflow-wrap: anywhere; margin-block: 24px; }
 .application-editor .choice-list label { align-items: flex-start; }
+
+body{
+  background: #f4f8f5;
+  color: #10271d;
+}
+
+button {
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-weight: 700;
+  transition:
+  transform 160ms ease,
+  box-shadow 160ms ease;
+
+}
+
+button:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(20,83,45,.16);
+}
+
+input,
+select,
+textarea {
+  min-height: 44px;
+  paddin: 10px 14px;
+  border: 1px solid #b8c9bf;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+ionput:focus,
+select,focus,
+textarea:focus {
+  border-color: #2e806b;
+  outline: 3px solid rgba(46, 128, 107, 0.15);
+}
+
+h1,
+h2,
+h3{
+  color: #164a41;
+  letter-spacing: -0.02em;
+}
